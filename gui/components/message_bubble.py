@@ -1,46 +1,81 @@
 """
-MessageBubble component - Styled chat message bubble.
+MessageBubble component - Styled chat message bubble for PySide6.
 """
 
-import flet as ft
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QLabel, QSizePolicy
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 
 
-class MessageBubble(ft.Container):
+class MessageBubble(QFrame):
     """A styled message bubble for User or AI."""
     
-    def __init__(self, role, text="", is_thinking=False):
-        super().__init__()
+    def __init__(self, role: str, text: str = "", is_thinking: bool = False, parent=None):
+        super().__init__(parent)
         self.role = role
         self.is_thinking = is_thinking
+        self._text = text
         
-        # Style Config
-        is_user = role == "user"
-        bg_color = "#005c4b" if is_user else "#363636"
-        align = ft.MainAxisAlignment.END if is_user else ft.MainAxisAlignment.START
-        border_radius = ft.BorderRadius.only(
-            top_left=15, top_right=15, 
-            bottom_left=15 if is_user else 0,
-            bottom_right=0 if is_user else 15
-        )
+        self.setObjectName("messageBubble")
+        self._setup_ui()
+        self._apply_style()
         
-        # Content
-        if is_thinking:
-            self.content = ft.Text(text, color=ft.Colors.GREY_400, italic=True, font_family="Roboto Mono", size=12)
-            bg_color = "#2a2a2a"
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 12, 15, 12)
+        layout.setSpacing(0)
+        
+        # Use QLabel for all text - simpler and more reliable sizing
+        self.content_label = QLabel(self._text)
+        self.content_label.setWordWrap(True)
+        self.content_label.setTextFormat(Qt.PlainText)
+        self.content_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        
+        if self.is_thinking:
+            self.content_label.setFont(QFont("Consolas", 11))
+            self.content_label.setStyleSheet("color: #9e9e9e; font-style: italic;")
         else:
-            self.content = ft.Markdown(
-                text, 
-                selectable=True, 
-                extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
-                code_theme="atom-one-dark",
-                on_tap_link=lambda e: self.page.launch_url(e.data) if self.page else None
-            )
-
-        self.bgcolor = bg_color
-        self.padding = 15
-        self.border_radius = border_radius
-        self.expand = False
-        self.width = None 
+            self.content_label.setFont(QFont("Segoe UI", 11))
+            self.content_label.setStyleSheet("color: #e8eaed;")
         
-        # Layout Helper
-        self.row_wrap = ft.Row([self], alignment=align, vertical_alignment=ft.CrossAxisAlignment.START)
+        self.content_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        layout.addWidget(self.content_label)
+    
+    def _apply_style(self):
+        is_user = self.role == "user"
+        
+        if self.is_thinking:
+            bg_color = "#2a2a2a"
+            border_radius = "12px"
+        elif is_user:
+            bg_color = "#005c4b"
+            border_radius = "18px 18px 4px 18px"
+        else:
+            bg_color = "#363636"
+            border_radius = "18px 18px 18px 4px"
+        
+        self.setStyleSheet(f"""
+            QFrame#messageBubble {{
+                background-color: {bg_color};
+                border-radius: {border_radius};
+            }}
+        """)
+        
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        self.setMinimumWidth(60)
+        self.setMaximumWidth(550)
+    
+    def set_text(self, text: str):
+        """Update the message content (for streaming)."""
+        self._text = text
+        self.content_label.setText(text)
+    
+    def append_text(self, text: str):
+        """Append text to the message (for streaming)."""
+        self._text += text
+        self.set_text(self._text)
+    
+    @property
+    def alignment(self):
+        """Return the alignment for this bubble."""
+        return Qt.AlignRight if self.role == "user" else Qt.AlignLeft

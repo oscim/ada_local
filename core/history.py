@@ -22,9 +22,16 @@ class ChatHistoryManager:
             id TEXT PRIMARY KEY,
             title TEXT,
             created_at TIMESTAMP,
-            updated_at TIMESTAMP
+            updated_at TIMESTAMP,
+            pinned INTEGER DEFAULT 0
         )
         ''')
+        
+        # Add pinned column if it doesn't exist (migration for existing DBs)
+        try:
+            cursor.execute('ALTER TABLE sessions ADD COLUMN pinned INTEGER DEFAULT 0')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
         
         # Messages table
         cursor.execute('''
@@ -49,8 +56,8 @@ class ChatHistoryManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         cursor.execute(
-            'INSERT INTO sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)',
-            (session_id, title, now, now)
+            'INSERT INTO sessions (id, title, created_at, updated_at, pinned) VALUES (?, ?, ?, ?, ?)',
+            (session_id, title, now, now, 0)
         )
         conn.commit()
         conn.close()
@@ -67,6 +74,24 @@ class ChatHistoryManager:
         )
         conn.commit()
         conn.close()
+
+    def toggle_pin(self, session_id):
+        """Toggle the pinned status of a session. Returns the new pinned state."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Get current pinned state
+        cursor.execute('SELECT pinned FROM sessions WHERE id = ?', (session_id,))
+        row = cursor.fetchone()
+        current_pinned = row[0] if row else 0
+        new_pinned = 0 if current_pinned else 1
+        
+        # Update
+        cursor.execute('UPDATE sessions SET pinned = ? WHERE id = ?', (new_pinned, session_id))
+        conn.commit()
+        conn.close()
+        
+        return bool(new_pinned)
 
     def add_message(self, session_id, role, content):
         """Add a message to a session."""
@@ -86,12 +111,12 @@ class ChatHistoryManager:
         conn.close()
 
     def get_sessions(self):
-        """Get all sessions, ordered by most recent update."""
+        """Get all sessions, ordered by pinned first, then most recent update."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute('SELECT id, title, created_at FROM sessions ORDER BY updated_at DESC')
+        cursor.execute('SELECT id, title, created_at, pinned FROM sessions ORDER BY pinned DESC, updated_at DESC')
         sessions = [
-            {'id': row[0], 'title': row[1], 'created_at': row[2]}
+            {'id': row[0], 'title': row[1], 'created_at': row[2], 'pinned': bool(row[3])}
             for row in cursor.fetchall()
         ]
         conn.close()

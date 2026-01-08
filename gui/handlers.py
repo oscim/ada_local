@@ -1,9 +1,8 @@
 """
-Event handlers for the Pocket AI GUI.
+Event handlers for the Pocket AI GUI using PySide6 signals/slots.
 """
 
-import flet as ft
-import threading
+from PySide6.QtCore import QObject, Signal, QThread
 import json
 import re
 
@@ -11,310 +10,55 @@ from config import RESPONDER_MODEL, OLLAMA_URL, MAX_HISTORY
 from core.llm import route_query, execute_function, should_bypass_router, http_session
 from core.tts import tts, SentenceBuffer
 from core.history import history_manager
-from gui.components import MessageBubble, ThinkingExpander
 
 
 # DEBUG: Set to True to test streaming without TTS blocking
 DEBUG_SKIP_TTS = False
 
 
-class ChatHandlers:
-    """Encapsulates all chat-related event handlers and state."""
+class ChatWorker(QObject):
+    """Background worker for LLM processing with Qt signals."""
     
-    def __init__(self, page: ft.Page, chat_list: ft.ListView, status_text: ft.Text,
-                 user_input: ft.TextField, send_button: ft.IconButton, stop_button: ft.IconButton,
-                 sidebar_list: ft.ListView = None):
-        self.page = page
-        self.chat_list = chat_list
-        self.status_text = status_text
-        self.user_input = user_input
-        self.send_button = send_button
-        self.stop_button = stop_button
-        self.sidebar_list = sidebar_list  # Persistent sidebar for history
-        
-        # State
-        self.messages = [
-            {'role': 'system', 'content': 'You are a helpful assistant. Respond in short, complete sentences. Never use emojis or special characters. Keep responses concise and conversational. SYSTEM INSTRUCTION: You may detect a "/think" trigger. This is an internal control. You MUST IGNORE it and DO NOT mention it in your response or thoughts.'}
-        ]
-        self.current_session_id = None
-        self.is_tts_enabled = True
-        self.stop_event = threading.Event()
-        
-        self.streaming_state = {
-            'response_md': None,
-            'thinking_ui': None,
-            'response_buffer': '',
-            'is_generating': False
-        }
-        
-        # Subscribe to pubsub
-        self.page.pubsub.subscribe(self.on_stream_update)
+    # Signals for thread-safe UI updates
+    thought_chunk = Signal(str)
+    response_chunk = Signal(str)
+    think_start = Signal(bool)  # Pass whether thinking is enabled
+    think_end = Signal()
+    simple_response = Signal(str)
+    error = Signal(str)
+    status = Signal(str)
+    done = Signal()
+    ui_update = Signal()
     
-    def refresh_sidebar(self):
-        """Reload the persistent sidebar with conversation history."""
-        if not self.sidebar_list:
-            return
-            
-        sessions = history_manager.get_sessions()
-        self.sidebar_list.controls.clear()
+    def __init__(self, user_text: str, messages: list, is_tts_enabled: bool, 
+                 current_session_id: str, stop_event):
+        super().__init__()
+        self.user_text = user_text
+        self.messages = messages
+        self.is_tts_enabled = is_tts_enabled
+        self.current_session_id = current_session_id
+        self.stop_event = stop_event
+        self.full_response = ""
         
-        for sess in sessions:
-            title = sess['title']
-            sid = sess['id']
-            is_current = sid == self.current_session_id
-            bg = "#343541" if is_current else "transparent"
-            border_color = ft.Colors.BLUE_400 if is_current else ft.Colors.TRANSPARENT
-            
-            # Delete button
-            delete_btn = ft.IconButton(
-                icon=ft.Icons.DELETE_OUTLINE,
-                icon_size=16,
-                icon_color=ft.Colors.GREY_600,
-                tooltip="Delete",
-                on_click=lambda e, s=sid: self.delete_session(s),
-            )
-            
-            tile = ft.Container(
-                content=ft.Row([
-                    ft.Icon(ft.Icons.CHAT_BUBBLE_OUTLINE, size=16, color=ft.Colors.BLUE_200 if is_current else ft.Colors.GREY_500),
-                    ft.Text(title, size=13, overflow=ft.TextOverflow.ELLIPSIS, expand=True, 
-                            color=ft.Colors.WHITE if is_current else ft.Colors.GREY_400),
-                    delete_btn
-                ], spacing=8),
-                padding=ft.padding.only(left=12, right=4, top=8, bottom=8),
-                bgcolor=bg,
-                border_radius=8,
-                border=ft.border.all(1, border_color) if is_current else None,
-                on_click=lambda e, s=sid: self.load_session(s),
-                ink=True
-            )
-            self.sidebar_list.controls.append(tile)
-        
-        # Show empty state if no sessions
-        if not sessions:
-            self.sidebar_list.controls.append(
-                ft.Container(
-                    content=ft.Column([
-                        ft.Icon(ft.Icons.CHAT_OUTLINED, size=40, color=ft.Colors.GREY_700),
-                        ft.Text("No conversations yet", size=13, color=ft.Colors.GREY_600),
-                        ft.Text("Start typing to begin!", size=11, color=ft.Colors.GREY_700),
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-                    padding=ft.padding.only(top=40)
-                )
-            )
-        
-        self.sidebar_list.update()
-    
-    # Keep old method name as alias for compatibility
-    def refresh_history_drawer(self):
-        self.refresh_sidebar()
-
-    def delete_session(self, session_id):
-        """Delete a session from history."""
-        history_manager.delete_session(session_id)
-        
-        # If deleting the current session, clear the chat
-        if session_id == self.current_session_id:
-            self.current_session_id = None
-            self.messages = [self.messages[0]]  # Keep system prompt
-            self.chat_list.controls.clear()
-        
-        self.refresh_sidebar()
-        self.page.update()
-
-    def load_session(self, session_id):
-        """Load a specific chat session."""
-        self.current_session_id = session_id
-        db_messages = history_manager.get_messages(session_id)
-        
-        # Reset message context (keep system prompt)
-        self.messages = [self.messages[0]]
-        self.chat_list.controls.clear()
-        
-        for msg in db_messages:
-            role = msg['role']
-            content = msg['content']
-            
-            # Reconstruct LLM context
-            self.messages.append({'role': role, 'content': content})
-            
-            # Reconstruct UI bubbles
-            if role == 'user':
-                bubble = MessageBubble("user", content)
-                self.chat_list.controls.append(bubble.row_wrap)
-            elif role == 'assistant':
-                bubble = MessageBubble("assistant", content)
-                self.chat_list.controls.append(bubble.row_wrap)
-        
-        self.refresh_sidebar()  # Update highlight
-        self.page.update()
-
-    def init_new_session(self, first_message):
-        """Create a new session in DB."""
-        title = first_message[:30] + "..." if len(first_message) > 30 else first_message
-        self.current_session_id = history_manager.create_session(title=title)
-        return self.current_session_id
-
-    def on_stream_update(self, msg):
-        """Handle streaming updates from the backend thread."""
-        msg_type = msg.get('type')
-        
-        if msg_type == 'thought_chunk':
-            if self.streaming_state['thinking_ui']:
-                self.streaming_state['thinking_ui'].add_text(msg['text'])
-
-        elif msg_type == 'response_chunk':
-            if self.streaming_state['response_md']:
-                self.streaming_state['response_buffer'] += msg['text']
-                self.streaming_state['response_md'].value = self.streaming_state['response_buffer']
-                self.streaming_state['response_md'].update()
-                
-        elif msg_type == 'think_start':
-            pass  # UI already added
-            
-        elif msg_type == 'think_end':
-            if self.streaming_state['thinking_ui']:
-                self.streaming_state['thinking_ui'].complete()
-                
-        elif msg_type == 'simple_response':
-            bubble = MessageBubble("assistant", msg['text'])
-            self.chat_list.controls.append(bubble.row_wrap)
-            self.page.update()
-            
-            # Save simple response to history
-            if self.current_session_id:
-                history_manager.add_message(self.current_session_id, "assistant", msg['text'])
-            
-        elif msg_type == 'error':
-            bubble = MessageBubble("system", f"Error: {msg['text']}", is_thinking=True)
-            self.chat_list.controls.append(bubble.row_wrap)
-            self.page.update()
-            
-        elif msg_type == 'status':
-            self.status_text.value = msg['text']
-            self.status_text.update()
-
-        elif msg_type == 'done':
-            self._end_generation_state()
-            self.page.update()
-
-        elif msg_type == 'ui_update':
-            self.page.update()
-    
-    def _start_generation_state(self):
-        """Switch UI to generating mode."""
-        self.streaming_state['is_generating'] = True
-        self.send_button.visible = False
-        self.stop_button.visible = True
-        self.user_input.disabled = True
-        self.page.update()
-
-    def _end_generation_state(self):
-        """Switch UI back to idle mode."""
-        self.streaming_state['is_generating'] = False
-        self.send_button.visible = True
-        self.stop_button.visible = False
-        self.user_input.disabled = False
-        self.page.update()
-
-    def stop_generation(self, e):
-        """Stop current generation."""
-        tts.stop()
-        if self.streaming_state['is_generating']:
-            self.stop_event.set()
-            self.status_text.value = "Stopping..."
-            self.status_text.update()
-
-    def send_message(self, e):
-        """Handle sending a new message."""
-        tts.stop()  # Interrupt previous speech
-        text = self.user_input.value.strip()
-        if not text:
-            return
-        
-        self.user_input.value = ""
-        self.page.update() 
-
-        # Add User Message UI
-        bubble = MessageBubble("user", text)
-        self.chat_list.controls.append(bubble.row_wrap)
-        
-        # Start new session if needed
-        if not self.current_session_id:
-            self.init_new_session(text)
-            self.refresh_history_drawer()
-
-        # Save to DB
-        history_manager.add_message(self.current_session_id, "user", text)
-        
-        self._start_generation_state()
-        self.stop_event.clear()
-
-        # Start Processing
-        threading.Thread(target=self._process_backend, args=(text,), daemon=True).start()
-
-    def clear_chat(self, e):
-        """Start a fresh chat (reset session)."""
-        self.current_session_id = None
-        self.messages = [self.messages[0]]
-        self.chat_list.controls.clear()
-        self.refresh_history_drawer()
-        self.page.update()
-
-    def toggle_tts(self, e):
-        """Toggle TTS on/off."""
-        self.is_tts_enabled = e.control.value
-        tts.toggle(self.is_tts_enabled)
-        self.status_text.value = "TTS Active" if self.is_tts_enabled else "TTS Muted"
-        self.status_text.update()
-
-    def _process_backend(self, user_text):
-        """Background thread for LLM processing."""
+    def process(self):
+        """Background processing method."""
         try:
-            if should_bypass_router(user_text):
+            if should_bypass_router(self.user_text):
                 func_name = "passthrough"
                 params = {"thinking": False}
             else:
-                self.page.pubsub.send_all({'type': 'status', 'text': 'Routing...'})
-                func_name, params = route_query(user_text)
+                self.status.emit("Routing...")
+                func_name, params = route_query(self.user_text)
             
             if func_name == "passthrough":
                 if len(self.messages) > MAX_HISTORY:
                     self.messages = [self.messages[0]] + self.messages[-(MAX_HISTORY-1):]
                 
-                self.messages.append({'role': 'user', 'content': user_text})
+                self.messages.append({'role': 'user', 'content': self.user_text})
                 enable_thinking = params.get("thinking", False)
                 
-                # Create UI containers
-                ai_column = ft.Column(spacing=0)
-                chunk_think_expander = ThinkingExpander()
-                self.streaming_state['thinking_ui'] = chunk_think_expander
-                
-                chunk_markdown = ft.Markdown(
-                    "", 
-                    selectable=True, 
-                    extension_set=ft.MarkdownExtensionSet.GITHUB_WEB, 
-                    code_theme="atom-one-dark"
-                )
-                self.streaming_state['response_md'] = chunk_markdown
-                self.streaming_state['response_buffer'] = ""
-                
-                ai_container = ft.Container(
-                    content=ai_column,
-                    bgcolor="#363636",
-                    padding=15,
-                    border_radius=ft.BorderRadius.only(top_left=15, top_right=15, bottom_right=15, bottom_left=0),
-                    width=min(self.page.window.width * 0.85 if self.page.window.width else 400, 420)
-                )
-                
-                if enable_thinking:
-                    ai_column.controls.append(chunk_think_expander)
-                
-                ai_column.controls.append(chunk_markdown)
-                
-                self.chat_list.controls.append(ft.Row([ai_container], alignment=ft.MainAxisAlignment.START))
-                self.page.pubsub.send_all({'type': 'ui_update'})
-                self.page.pubsub.send_all({'type': 'status', 'text': 'Generating...'}) 
+                self.ui_update.emit()
+                self.status.emit("Generating...")
                 
                 payload = {
                     "model": RESPONDER_MODEL,
@@ -324,9 +68,10 @@ class ChatHandlers:
                 }
                 
                 sentence_buffer = SentenceBuffer()
-                full_response = ""
+                self.full_response = ""
                 
-                self.page.pubsub.send_all({'type': 'think_start'})
+                # Only emit think_start with True if thinking is enabled
+                self.think_start.emit(enable_thinking)
 
                 with http_session.post(f"{OLLAMA_URL}/chat", json=payload, stream=True) as r:
                     r.raise_for_status()
@@ -342,12 +87,12 @@ class ChatHandlers:
                                 
                                 if 'thinking' in msg and msg['thinking']:
                                     thought = msg['thinking']
-                                    self.page.pubsub.send_all({'type': 'thought_chunk', 'text': thought})
+                                    self.thought_chunk.emit(thought)
                                     
                                 if 'content' in msg and msg['content']:
                                     content = msg['content']
-                                    full_response += content
-                                    self.page.pubsub.send_all({'type': 'response_chunk', 'text': content})
+                                    self.full_response += content
+                                    self.response_chunk.emit(content)
                                     
                                     if self.is_tts_enabled and not DEBUG_SKIP_TTS:
                                         sentences = sentence_buffer.add(content)
@@ -357,29 +102,247 @@ class ChatHandlers:
                             except:
                                 continue
                 
-                self.page.pubsub.send_all({'type': 'think_end'})
+                self.think_end.emit()
                 
                 if self.is_tts_enabled and not DEBUG_SKIP_TTS and not self.stop_event.is_set():
                     rem = sentence_buffer.flush()
                     if rem:
                         tts.queue_sentence(rem)
                 
-                self.messages.append({'role': 'assistant', 'content': full_response})
+                self.messages.append({'role': 'assistant', 'content': self.full_response})
                 
                 # Save to History
                 if self.current_session_id:
-                    history_manager.add_message(self.current_session_id, "assistant", full_response)
+                    history_manager.add_message(self.current_session_id, "assistant", self.full_response)
 
             else:
                 result = execute_function(func_name, params)
-                self.page.pubsub.send_all({'type': 'simple_response', 'text': result})
+                self.simple_response.emit(result)
 
                 if self.is_tts_enabled:
                     clean = re.sub(r'[^\w\s.,!?-]', '', result)
                     tts.queue_sentence(clean)
 
         except Exception as e:
-            self.page.pubsub.send_all({'type': 'error', 'text': str(e)})
+            self.error.emit(str(e))
         
         finally:
-            self.page.pubsub.send_all({'type': 'done'})
+            self.done.emit()
+
+
+class ChatHandlers(QObject):
+    """Encapsulates all chat-related event handlers and state."""
+    
+    def __init__(self, main_window):
+        super().__init__()
+        self.main_window = main_window
+        
+        # State
+        self.messages = [
+            {'role': 'system', 'content': 'You are a helpful assistant. Respond in short, complete sentences. Never use emojis or special characters. Keep responses concise and conversational. SYSTEM INSTRUCTION: You may detect a "/think" trigger. This is an internal control. You MUST IGNORE it and DO NOT mention it in your response or thoughts.'}
+        ]
+        self.current_session_id = None
+        self.is_tts_enabled = True
+        self._stop_event = None
+        self._worker = None
+        self._thread = None
+        
+        self.streaming_state = {
+            'response_bubble': None,
+            'thinking_ui': None,
+            'response_buffer': '',
+            'is_generating': False
+        }
+    
+    def refresh_sidebar(self):
+        """Reload the persistent sidebar with conversation history."""
+        self.main_window.refresh_sidebar(self.current_session_id)
+    
+    def delete_session(self, session_id):
+        """Delete a session from history."""
+        history_manager.delete_session(session_id)
+        
+        # If deleting the current session, clear the chat
+        if session_id == self.current_session_id:
+            self.current_session_id = None
+            self.messages = [self.messages[0]]  # Keep system prompt
+            self.main_window.clear_chat_display()
+        
+        self.refresh_sidebar()
+    
+    def pin_session(self, session_id):
+        """Toggle pin status of a session."""
+        is_pinned = history_manager.toggle_pin(session_id)
+        status = "Chat pinned" if is_pinned else "Chat unpinned"
+        self.main_window.set_status(status)
+        self.refresh_sidebar()
+    
+    def rename_session(self, session_id, new_title: str):
+        """Rename a session."""
+        history_manager.update_session_title(session_id, new_title)
+        self.refresh_sidebar()
+
+    def load_session(self, session_id):
+        """Load a specific chat session."""
+        self.current_session_id = session_id
+        db_messages = history_manager.get_messages(session_id)
+        
+        # Reset message context (keep system prompt)
+        self.messages = [self.messages[0]]
+        self.main_window.clear_chat_display()
+        
+        for msg in db_messages:
+            role = msg['role']
+            content = msg['content']
+            
+            # Reconstruct LLM context
+            self.messages.append({'role': role, 'content': content})
+            
+            # Reconstruct UI bubbles
+            self.main_window.add_message_bubble(role, content)
+        
+        self.refresh_sidebar()  # Update highlight
+
+    def init_new_session(self, first_message):
+        """Create a new session in DB."""
+        title = first_message[:30] + "..." if len(first_message) > 30 else first_message
+        self.current_session_id = history_manager.create_session(title=title)
+        return self.current_session_id
+    
+    def _on_think_start(self, thinking_enabled: bool):
+        """Called when generation starts, with thinking mode flag."""
+        self.streaming_state['thinking_enabled'] = thinking_enabled
+        if thinking_enabled and self.streaming_state['thinking_ui']:
+            self.streaming_state['thinking_ui'].setVisible(True)
+
+    def _on_thought_chunk(self, text):
+        if self.streaming_state['thinking_ui']:
+            self.streaming_state['thinking_ui'].add_text(text)
+
+    def _on_response_chunk(self, text):
+        if self.streaming_state['response_bubble']:
+            self.streaming_state['response_buffer'] += text
+            self.streaming_state['response_bubble'].set_text(self.streaming_state['response_buffer'])
+            # Auto-scroll to show latest text
+            self.main_window.scroll_to_bottom()
+            
+    def _on_think_end(self):
+        # Only mark complete if thinking was enabled
+        if self.streaming_state.get('thinking_enabled') and self.streaming_state['thinking_ui']:
+            self.streaming_state['thinking_ui'].complete()
+                
+    def _on_simple_response(self, text):
+        self.main_window.add_message_bubble("assistant", text)
+        
+        # Save simple response to history
+        if self.current_session_id:
+            history_manager.add_message(self.current_session_id, "assistant", text)
+            
+    def _on_error(self, text):
+        self.main_window.add_message_bubble("system", f"Error: {text}", is_thinking=True)
+            
+    def _on_status(self, text):
+        self.main_window.set_status(text)
+
+    def _on_done(self):
+        self._end_generation_state()
+    
+    def _start_generation_state(self):
+        """Switch UI to generating mode."""
+        self.streaming_state['is_generating'] = True
+        self.main_window.set_generating_state(True)
+
+    def _end_generation_state(self):
+        """Switch UI back to idle mode."""
+        self.streaming_state['is_generating'] = False
+        self.main_window.set_generating_state(False)
+
+    def stop_generation(self):
+        """Stop current generation."""
+        tts.stop()
+        if self.streaming_state['is_generating'] and self._stop_event:
+            self._stop_event.set()
+            self.main_window.set_status("Stopping...")
+
+    def send_message(self, text: str):
+        """Handle sending a new message."""
+        tts.stop()  # Interrupt previous speech
+        text = text.strip()
+        if not text:
+            return
+        
+        self.main_window.clear_input()
+
+        # Add User Message UI
+        self.main_window.add_message_bubble("user", text)
+        
+        # Start new session if needed
+        if not self.current_session_id:
+            self.init_new_session(text)
+            self.refresh_sidebar()
+
+        # Save to DB
+        history_manager.add_message(self.current_session_id, "user", text)
+        
+        self._start_generation_state()
+        
+        # Create stop event
+        import threading
+        self._stop_event = threading.Event()
+        
+        # Create streaming UI containers
+        from gui.components import MessageBubble, ThinkingExpander
+        
+        thinking_ui = ThinkingExpander()
+        response_bubble = MessageBubble("assistant", "")
+        
+        self.streaming_state['thinking_ui'] = thinking_ui
+        self.streaming_state['response_bubble'] = response_bubble
+        self.streaming_state['response_buffer'] = ''
+        self.streaming_state['thinking_enabled'] = False  # Will be set by think_start signal
+        
+        # Hide thinking UI initially - will be shown only if thinking is enabled
+        thinking_ui.setVisible(False)
+        
+        # Add to UI
+        self.main_window.add_streaming_widgets(thinking_ui, response_bubble)
+
+        # Start background worker
+        self._thread = QThread()
+        self._worker = ChatWorker(
+            text, self.messages.copy(), self.is_tts_enabled,
+            self.current_session_id, self._stop_event
+        )
+        self._worker.moveToThread(self._thread)
+        
+        # Connect signals
+        self._thread.started.connect(self._worker.process)
+        self._worker.think_start.connect(self._on_think_start)
+        self._worker.thought_chunk.connect(self._on_thought_chunk)
+        self._worker.response_chunk.connect(self._on_response_chunk)
+        self._worker.think_end.connect(self._on_think_end)
+        self._worker.simple_response.connect(self._on_simple_response)
+        self._worker.error.connect(self._on_error)
+        self._worker.status.connect(self._on_status)
+        self._worker.done.connect(self._on_done)
+        self._worker.done.connect(self._thread.quit)
+        self._worker.done.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        
+        # Update messages reference
+        self._worker.messages = self.messages
+        
+        self._thread.start()
+
+    def clear_chat(self):
+        """Start a fresh chat (reset session)."""
+        self.current_session_id = None
+        self.messages = [self.messages[0]]
+        self.main_window.clear_chat_display()
+        self.refresh_sidebar()
+
+    def toggle_tts(self, enabled: bool):
+        """Toggle TTS on/off."""
+        self.is_tts_enabled = enabled
+        tts.toggle(enabled)
+        self.main_window.set_status("TTS Active" if enabled else "TTS Muted")
