@@ -23,7 +23,6 @@ from gui.tabs.chat import ChatTab
 from gui.tabs.planner import PlannerTab
 from gui.tabs.briefing import BriefingView
 from gui.tabs.home_automation import HomeAutomationTab
-from gui.tabs.agent import AgentTab
 from gui.components.system_monitor import SystemMonitor
 
 
@@ -66,7 +65,6 @@ class MainWindow(FluentWindow):
         self.planner_tab = None
         self.briefing_view = None
         self.home_tab = None
-        self.agent_tab = None
 
         self._init_window()
         self._connect_signals()
@@ -83,13 +81,11 @@ class MainWindow(FluentWindow):
         self.planner_lazy = LazyTab(PlannerTab, "plannerInterface")
         self.briefing_lazy = LazyTab(BriefingView, "briefingInterface")
         self.home_lazy = LazyTab(HomeAutomationTab, "homeInterface")
-        self.agent_lazy = LazyTab(AgentTab, "agentInterface")
         
         self.addSubInterface(self.chat_lazy, FIF.CHAT, "Chat")
         self.addSubInterface(self.planner_lazy, FIF.CALENDAR, "Planner")
         self.addSubInterface(self.briefing_lazy, FIF.DATE_TIME, "Briefing")
         self.addSubInterface(self.home_lazy, FIF.LAYOUT, "Home Auto")
-        self.addSubInterface(self.agent_lazy, FIF.ROBOT, "Agent")
         
     def _connect_signals(self):
         """Connect signals. Signals for lazy tabs are connected upon initialization."""
@@ -156,8 +152,7 @@ class MainWindow(FluentWindow):
                 self.briefing_view = real_widget
             elif obj_name == "homeInterface":
                 self.home_tab = real_widget
-            elif obj_name == "agentInterface":
-                self.agent_tab = real_widget
+                self.home_tab = real_widget
                 
         self.set_status("Ready")
     
