@@ -15,7 +15,7 @@ class NewsLoaderThread(QThread):
     status_update = Signal(str)
     
     def run(self):
-        news = news_manager.get_briefing(status_callback=self.status_update.emit)
+        news = news_manager.get_briefing(status_callback=self.status_update.emit, use_ai=True)
         self.loaded.emit(news)
 
 class BriefingView(QWidget):
@@ -63,7 +63,7 @@ class BriefingView(QWidget):
         bk_label.setStyleSheet("color: #ef5350; font-weight: bold;")
         bk_layout.addWidget(bk_label)
         
-        self.bk_text = BodyLabel("Loading latest intelligence stream...")
+        self.bk_text = BodyLabel("Click Refresh to load intelligence.")
         bk_layout.addWidget(self.bk_text)
         bk_layout.addStretch()
         
@@ -98,7 +98,7 @@ class BriefingView(QWidget):
         self.layout.addWidget(scroll)
         
         # Load Data
-        self.load_news()
+        # self.load_news()
 
     def load_news(self):
         self.bk_text.setText("Syncing global sources...")

@@ -484,7 +484,7 @@ class DashboardLoader(QThread):
         # Fetch tasks and news in background
         try:
             tasks = task_manager.get_tasks()
-            news = news_manager.get_briefing()
+            news = news_manager.get_briefing(use_ai=False)
             self.finished.emit({
                 "tasks": tasks,
                 "news": news

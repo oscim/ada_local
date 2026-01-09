@@ -13,7 +13,7 @@ class NewsManager:
         self.cache = {}
         self.cache_duration = datetime.timedelta(minutes=15)
 
-    def get_briefing(self, status_callback=None) -> list:
+    def get_briefing(self, status_callback=None, use_ai: bool = True) -> list:
         """
         Get a curated briefing.
         Fetches 'top' and 'technology' news, then asks AI to pick the best ones.
@@ -51,8 +51,10 @@ class NewsManager:
             return []
 
         # 3. AI Curation
-        if status_callback: status_callback("AI is reading and curating stories...")
-        curated_news = self._curate_with_ai(raw_news)
+        curated_news = None
+        if use_ai:
+            if status_callback: status_callback("AI is reading and curating stories...")
+            curated_news = self._curate_with_ai(raw_news)
         
         # 4. Fallback if AI fails: just return raw news formatted
         if not curated_news:
