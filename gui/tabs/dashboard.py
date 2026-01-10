@@ -186,20 +186,20 @@ class WeatherWorker(QThread):
         data = weather_manager.get_weather()
         self.finished.emit(data or {})
 
-
 class StatCard(CardWidget):
     """
     Square/Rectangular card for quick stats (Agenda, Devices, etc).
-    Clickable - emits clicked signal with route_key for navigation.
+    Clickable - emits navigate_requested signal with route_key for navigation.
     """
-    clicked = Signal(str)
+    navigate_requested = Signal(str)
     
     def __init__(self, icon: FIF, title: str, count: str, route_key: str = None, parent=None):
         super().__init__(parent)
         self.setFixedSize(280, 110)
         self.setBorderRadius(16)
         self.route_key = route_key
-        self.setCursor(Qt.PointingHandCursor) if route_key else None
+        if route_key:
+            self.setCursor(Qt.PointingHandCursor)
         
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 20, 25, 20)
@@ -249,7 +249,7 @@ class StatCard(CardWidget):
     def mousePressEvent(self, event):
         super().mousePressEvent(event)
         if self.route_key:
-            self.clicked.emit(self.route_key)
+            self.navigate_requested.emit(self.route_key)
 
 class HomeScenesCard(CardWidget):
     """
@@ -673,17 +673,17 @@ class DashboardView(QWidget):
         
         # Stat 1: Planner - navigates to plannerInterface
         self.planner_stat = StatCard(FIF.CALENDAR, "Planner Agenda", "--", "plannerInterface")
-        self.planner_stat.clicked.connect(self._on_navigate)
+        self.planner_stat.navigate_requested.connect(self._on_navigate)
         left_col.addWidget(self.planner_stat)
         
         # Stat 2: Devices - navigates to homeInterface
         self.devices_stat = StatCard(FIF.IOT, "Active Devices", "--", "homeInterface")
-        self.devices_stat.clicked.connect(self._on_navigate)
+        self.devices_stat.navigate_requested.connect(self._on_navigate)
         left_col.addWidget(self.devices_stat)
         
         # Stat 3: Unread News - navigates to briefingInterface
         self.news_stat = StatCard(FIF.TILES, "Unread News", "--", "briefingInterface")
-        self.news_stat.clicked.connect(self._on_navigate)
+        self.news_stat.navigate_requested.connect(self._on_navigate)
         left_col.addWidget(self.news_stat)
         
         # Home Scenes
