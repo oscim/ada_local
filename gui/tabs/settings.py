@@ -2,6 +2,8 @@
 Comprehensive Settings Tab with model selection, connection settings, and preferences.
 """
 
+from config import LOCAL_ROUTER_PATH, RESPONDER_MODEL
+
 import requests
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout
@@ -318,6 +320,15 @@ class SettingsTab(ScrollArea):
             self.ai_group
         )
         self.ai_group.addSettingCard(self.web_agent_model_card)
+        
+        # Function Router (Local Gemma) - Read-Only Display
+        self.router_model_card = SettingCard(
+            FIF.ROBOT,
+            "Function Router Model",
+            f"Local FunctionGemma model at: {LOCAL_ROUTER_PATH}",
+            self.ai_group
+        )
+        self.ai_group.addSettingCard(self.router_model_card)
         
         self.refresh_models_card = PushSettingCard(
             "Refresh",

@@ -9,6 +9,7 @@ from PySide6.QtCore import QTimer, Qt, QObject, Signal, QThread
 from PySide6.QtGui import QFont
 
 from config import OLLAMA_URL
+from core.llm import is_router_loaded
 
 # Try to import pynvml for GPU monitoring
 try:
@@ -75,6 +76,9 @@ class MonitorWorker(QObject):
                     stats['models'] = "Offline"
             except Exception:
                 stats['models'] = "Offline"
+            
+            # Local Router Model (Gemma)
+            stats['router_loaded'] = is_router_loaded()
 
             self.stats_updated.emit(stats)
         except Exception as e:
@@ -246,17 +250,28 @@ class SystemMonitor(QFrame):
              
         # Models
         models = stats.get('models', [])
+        router_loaded = stats.get('router_loaded', False)
+        
+        display_parts = []
+        
+        # Add Ollama models
         if isinstance(models, list):
             if models:
-                # Show up to 3 models, then count
-                if len(models) <= 3:
-                    self.models_value.setText(", ".join(models))
+                if len(models) <= 2:
+                    display_parts.extend(models)
                 else:
-                    self.models_value.setText(f"{', '.join(models[:2])} +{len(models)-2}")
-            else:
-                self.models_value.setText("None")
+                    display_parts.append(f"{models[0]} +{len(models)-1}")
+        elif models == "Offline":
+            display_parts.append("Ollama Offline")
+        
+        # Add local router
+        if router_loaded:
+            display_parts.append("gemma")
+        
+        if display_parts:
+            self.models_value.setText(", ".join(display_parts))
         else:
-            self.models_value.setText(models) # "Offline" or "Loading..."
+            self.models_value.setText("None")
 
     def _color_by_usage(self, label: QLabel, percent: float):
         """Color the label based on usage percentage."""

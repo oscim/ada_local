@@ -17,10 +17,16 @@ http_session = requests.Session()
 router = None
 
 
+def is_router_loaded():
+    """Check if the local router model is loaded in memory."""
+    return router is not None
+
+
 def should_bypass_router(text):
     """Return True if text definitely doesn't need routing."""
-    text = text.lower()
-    return not any(k in text for k in ROUTER_KEYWORDS)
+    # text = text.lower()
+    # return not any(k in text for k in ROUTER_KEYWORDS)
+    return False  # Force router to always run for debugging purposes
 
 
 def route_query(user_input):
@@ -40,7 +46,14 @@ def route_query(user_input):
     try:
         # Route using the fine-tuned model - returns (func_name, params)
         (func_name, params), elapsed = router.route_with_timing(user_input)
-        # Timing info available: elapsed*1000 ms
+        
+        # DEBUG: Print routing result
+        print(f"\n{'='*60}")
+        print(f"[LLM Route] Input: {user_input}")
+        print(f"[LLM Route] Result: {func_name}({params})")
+        print(f"[LLM Route] Time: {elapsed*1000:.0f}ms")
+        print(f"{'='*60}\n")
+        
         return func_name, params
             
     except Exception as e:
@@ -107,13 +120,22 @@ def preload_models():
 
     def load_responder():
         try:
-            http_session.post(f"{OLLAMA_URL}/chat", json={
+            # Send a minimal prompt to force the model to fully load into VRAM
+            # The keep_alive ensures it stays loaded for 30 minutes
+            print(f"{GRAY}[System] Loading responder model ({RESPONDER_MODEL})...{RESET}")
+            response = http_session.post(f"{OLLAMA_URL}/generate", json={
                 "model": RESPONDER_MODEL, 
-                "messages": [], 
-                "keep_alive": "30m"  # Keep warm for 30 minutes after startup
-            }, timeout=1)
-        except:
-            pass
+                "prompt": "hi",
+                "stream": False,
+                "keep_alive": "30m",
+                "options": {"num_predict": 1}  # Generate just 1 token to minimize wait
+            }, timeout=120)  # 2 minute timeout for initial model load
+            if response.status_code == 200:
+                print(f"{GRAY}[System] Responder model loaded successfully.{RESET}")
+            else:
+                print(f"{GRAY}[System] Responder model load returned status {response.status_code}{RESET}")
+        except Exception as e:
+            print(f"{GRAY}[System] Failed to preload responder: {e}{RESET}")
 
     def load_voice():
         print(f"{GRAY}[System] Loading voice model...{RESET}")

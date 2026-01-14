@@ -15,6 +15,9 @@ from qfluentwidgets import (
 
 from gui.handlers import ChatHandlers
 from core.model_manager import unload_all_models
+from core.voice_assistant import voice_assistant
+from core.tts import tts
+from config import VOICE_ASSISTANT_ENABLED
 
 from gui.styles import AURA_STYLESHEET 
 
@@ -26,6 +29,7 @@ from gui.tabs.briefing import BriefingView
 from gui.tabs.browser import BrowserTab
 from gui.tabs.home_automation import HomeAutomationTab
 from gui.components.system_monitor import SystemMonitor
+from gui.components.voice_indicator import VoiceIndicator
 from core.llm import preload_models
 
 
@@ -69,6 +73,9 @@ class MainWindow(FluentWindow):
         # Add system monitor to title bar
         self._init_system_monitor()
         
+        # Initialize voice indicator
+        self.voice_indicator = VoiceIndicator(self)
+        
         # Initialize sub-interfaces pointers
         self.chat_tab = None
         self.planner_tab = None
@@ -82,11 +89,64 @@ class MainWindow(FluentWindow):
         self._connect_signals()
         self._init_background()
         self._preload_models()
+        self._init_voice_assistant()
         
     def _preload_models(self):
         """Start the background thread to preload models."""
         self.preloader_thread = ModelPreloaderThread()
         self.preloader_thread.start()
+    
+    def _init_voice_assistant(self):
+        """Initialize and start voice assistant if enabled."""
+        print(f"[App] Initializing voice assistant (enabled={VOICE_ASSISTANT_ENABLED})...")
+        if VOICE_ASSISTANT_ENABLED:
+            # Connect voice assistant signals to UI
+            print(f"[App] Connecting voice assistant signals...")
+            voice_assistant.wake_word_detected.connect(self._on_wake_word_detected)
+            voice_assistant.speech_recognized.connect(self._on_speech_recognized)
+            voice_assistant.processing_finished.connect(self._on_processing_finished)
+            print(f"[App] ✓ Signals connected")
+            
+            # Initialize in background thread to avoid blocking UI
+            def init_va():
+                print(f"[App] Background thread: Initializing voice assistant...")
+                if voice_assistant.initialize():
+                    print(f"[App] Background thread: ✓ Voice assistant initialized")
+                    # Enable TTS for voice assistant
+                    tts.toggle(True)
+                    print(f"[App] Background thread: TTS enabled")
+                    # Start listening
+                    print(f"[App] Background thread: Starting voice assistant...")
+                    voice_assistant.start()
+                    print(f"[App] Background thread: ✓ Voice assistant started")
+                else:
+                    print(f"[App] Background thread: ✗ Failed to initialize voice assistant")
+            
+            threading.Thread(target=init_va, daemon=True).start()
+        else:
+            print(f"[App] Voice assistant disabled in config")
+    
+    def _on_wake_word_detected(self):
+        """Handle wake word detection - show listening indicator."""
+        print(f"{GREEN}[App] ✓ Wake word signal received in UI thread!{RESET}")
+        if VOICE_ASSISTANT_ENABLED:
+            print(f"{GREEN}[App] Showing voice indicator...{RESET}")
+            self.voice_indicator.show_listening()
+            print(f"{GREEN}[App] ✓ Voice indicator shown{RESET}")
+        else:
+            print(f"{GRAY}[App] Voice assistant disabled in config{RESET}")
+    
+    def _on_speech_recognized(self, text: str):
+        """Handle speech recognition - update indicator text if needed."""
+        # Keep showing indicator while processing
+        # Could update text here if we want to show what was recognized
+        pass
+    
+    def _on_processing_finished(self):
+        """Handle processing finished - hide listening indicator."""
+        if VOICE_ASSISTANT_ENABLED:
+            # Small delay before hiding to make it more visible
+            self.voice_indicator.hide_listening(delay_ms=800)
         
     def _init_window(self):
         # Dashboard is loaded immediately as it's the home screen
@@ -232,6 +292,11 @@ class MainWindow(FluentWindow):
         """Handle application close event."""
         print("[App] Closing application, unloading models...")
         self.set_status("Closing...")
+        
+        # Stop voice assistant
+        if VOICE_ASSISTANT_ENABLED:
+            voice_assistant.stop()
+        
         unload_all_models(sync=True)
         event.accept()
 

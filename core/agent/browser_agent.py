@@ -8,6 +8,7 @@ from .browser_controller import BrowserController
 from .vlm_client import VLMClient
 
 from core.model_manager import ensure_exclusive_qwen
+from core.model_persistence import unload_qwen
 
 class BrowserAgent(QObject):
     """
@@ -35,6 +36,8 @@ class BrowserAgent(QObject):
         self.history = []
 
     def start_task(self, instruction: str):
+        # Unload Qwen model to free VRAM for VLM
+        unload_qwen("browser_agent_using_vlm")
         # Unload other models to free VRAM
         ensure_exclusive_qwen(self.client.model_name)
         

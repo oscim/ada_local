@@ -13,6 +13,23 @@ TTS_VOICE_MODEL = "en_GB-alba-medium"
 TTS_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
 TTS_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
 
+# --- STT Configuration ---
+STT_MODEL_PATH = None  # Set to path if using Vosk, e.g., "./models/vosk-model-en-us-0.22"
+STT_USE_WHISPER = True  # Use Whisper if True, Vosk if False
+WHISPER_MODEL_SIZE = "small"  # Options: tiny, base, small, medium, large (small recommended for accuracy)
+USE_PORCUPINE_WAKE_WORD = False  # Use Porcupine for wake word detection (more accurate, requires API key)
+PORCUPINE_ACCESS_KEY = None  # Get from https://console.picovoice.ai/ (optional, for better wake word detection)
+WAKE_WORD = "ada"
+WAKE_WORD_SENSITIVITY = 0.5
+STT_SAMPLE_RATE = 16000
+STT_CHUNK_SIZE = 4096
+STT_RECORD_TIMEOUT = 5.0  # Maximum seconds to record after wake word
+
+# --- Voice Assistant Configuration ---
+VOICE_ASSISTANT_ENABLED = True
+QWEN_TIMEOUT_SECONDS = 300  # 5 minutes of inactivity before sleep
+QWEN_KEEP_ALIVE = "5m"  # Keep in memory for 5 minutes after last use
+
 # --- Router Keywords ---
 # Keywords that trigger the Router (otherwise we default to chat)
 ROUTER_KEYWORDS = [
