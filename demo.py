@@ -7,9 +7,150 @@ import wave
 import threading
 import queue
 import time
+import logging
 import sounddevice as sd
 import numpy as np
 from pathlib import Path
+
+# RealtimeSTT for wake word and speech recognition
+try:
+    from RealtimeSTT import AudioToTextRecorder
+    REALTIMESTT_AVAILABLE = True
+except ImportError:
+    REALTIMESTT_AVAILABLE = False
+
+# VRAM Monitoring
+try:
+    import pynvml
+    PYNVML_AVAILABLE = True
+except ImportError:
+    PYNVML_AVAILABLE = False
+
+
+class VRAMMonitor:
+    """Background thread that monitors and displays GPU VRAM usage."""
+    
+    def __init__(self, interval=5.0):
+        self.interval = interval
+        self.running = False
+        self.thread = None
+        
+        if PYNVML_AVAILABLE:
+            try:
+                pynvml.nvmlInit()
+                self.device_count = pynvml.nvmlDeviceGetCount()
+                self.handles = [pynvml.nvmlDeviceGetHandleByIndex(i) for i in range(self.device_count)]
+            except Exception as e:
+                print(f"[VRAM Monitor] Failed to initialize: {e}")
+                self.device_count = 0
+                self.handles = []
+        else:
+            self.device_count = 0
+            self.handles = []
+    
+    def get_vram_usage(self):
+        """Get VRAM usage for all GPUs."""
+        if not PYNVML_AVAILABLE or not self.handles:
+            return None
+        
+        usage = []
+        for i, handle in enumerate(self.handles):
+            try:
+                info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                used_gb = info.used / (1024 ** 3)
+                total_gb = info.total / (1024 ** 3)
+                percent = (info.used / info.total) * 100
+                usage.append((i, used_gb, total_gb, percent))
+            except:
+                pass
+        return usage
+    
+    def print_usage(self):
+        """Print current VRAM usage."""
+        usage = self.get_vram_usage()
+        if usage:
+            for gpu_id, used, total, percent in usage:
+                print(f"\r\033[90m[VRAM GPU{gpu_id}] {used:.2f}/{total:.2f} GB ({percent:.1f}%)\033[0m", end="", flush=True)
+            print()  # New line
+    
+    def _monitor_loop(self):
+        """Background monitoring loop."""
+        while self.running:
+            self.print_usage()
+            time.sleep(self.interval)
+    
+    def start(self):
+        """Start background VRAM monitoring."""
+        if not PYNVML_AVAILABLE or not self.handles:
+            print("[VRAM Monitor] Not available (pynvml not installed or no GPU)")
+            return
+        
+        self.running = True
+        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.thread.start()
+        print(f"[VRAM Monitor] Started (interval: {self.interval}s)")
+    
+    def stop(self):
+        """Stop background monitoring."""
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+    
+    def shutdown(self):
+        """Clean up pynvml."""
+        self.stop()
+        if PYNVML_AVAILABLE:
+            try:
+                pynvml.nvmlShutdown()
+            except:
+                pass
+
+
+# Global VRAM monitor
+vram_monitor = VRAMMonitor(interval=10.0)
+
+
+def check_device_status():
+    """Check and print the device status for all components."""
+    print(f"\n{BOLD}{'='*50}{RESET}")
+    print(f"{BOLD}Device Status Check{RESET}")
+    print(f"{'='*50}")
+    
+    # Check PyTorch CUDA availability
+    import torch
+    cuda_available = torch.cuda.is_available()
+    print(f"  PyTorch CUDA Available: {GREEN if cuda_available else YELLOW}{cuda_available}{RESET}")
+    
+    if cuda_available:
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_count = torch.cuda.device_count()
+        print(f"  GPU: {gpu_name}")
+        print(f"  GPU Count: {gpu_count}")
+    else:
+        print(f"  {YELLOW}WARNING: CUDA not available - models will use CPU{RESET}")
+    
+    # Check Router device
+    if router:
+        router_device = str(router.model.device)
+        router_dtype = str(router.model.dtype)
+        is_gpu = "cuda" in router_device
+        print(f"  Router Model: {GREEN if is_gpu else YELLOW}{router_device}{RESET} ({router_dtype})")
+    else:
+        print(f"  Router Model: {GRAY}Not loaded{RESET}")
+    
+    # Check TTS engine
+    if tts.voice:
+        print(f"  TTS Engine: PiperTTS ({tts.VOICE_MODEL})")
+        print(f"  TTS Device: CPU (ONNX)")
+    else:
+        print(f"  TTS Engine: {GRAY}Not loaded{RESET}")
+    
+    # Summary
+    print(f"{'='*50}")
+    if vram_monitor.handles:
+        vram_monitor.print_usage()
+    print()
+
 
 # ANSI Escape Codes for coloring output
 GRAY = "\033[90m"
@@ -20,7 +161,7 @@ GREEN = "\033[32m"
 YELLOW = "\033[33m"
 
 # --- Model Configuration ---
-RESPONDER_MODEL = "qwen3:1.7b"       # Conversational responses
+RESPONDER_MODEL = "qwen3:0.6b"       # Conversational responses
 OLLAMA_URL = "http://localhost:11434/api"
 LOCAL_ROUTER_PATH = "./merged_model"
 
@@ -28,7 +169,7 @@ LOCAL_ROUTER_PATH = "./merged_model"
 http_session = requests.Session()
 
 try:
-    from function_router import FunctionGemmaRouter
+    from core.router import FunctionGemmaRouter
 except ImportError:
     print(f"{GRAY}[System] FunctionGemmaRouter not found.{RESET}")
     sys.exit(1)
@@ -36,30 +177,11 @@ except ImportError:
 # Global Router Instance
 router = None
 
-# Keywords that trigger the Router (otherwise we default to chat)
-ROUTER_KEYWORDS = [
-    # Tools
-    "turn", "light", "dim", "switch",   # Lights
-    "search", "google", "find", "look", # Search
-    "timer", "alarm", "clock",          # Timers
-    "calendar", "schedule", "appoint", "meet", "event", # Calendar
-    
-    # Complexity / Thinking Triggers (from Training Data)
-    "explain", "how", "why", "cause", "difference", "compare", "meaning", # Reasoning
-    "solve", "calculate", "equation", "math", "+", "*", "divide", "minus", # Math
-    "write", "poem", "haiku", "riddle", "story", "script", "code", # Creative/Coding
-    "if", "when" # Conditionals
-]
-
-def should_bypass_router(text):
-    """Return True if text definitely doesn't need routing."""
-    text = text.lower()
-    return not any(k in text for k in ROUTER_KEYWORDS)
-
 # --- Function Definitions (Official JSON Schema) ---
-# NOTE: The fine-tuned model only knows 'thinking' and 'nonthinking'.
-# We keep these definitions for reference or future expansion, 
-# but the router will currently only trigger thinking/nonthinking logic.
+# The fine-tuned function gemma model routes ALL inputs and determines
+# whether to use thinking mode or non-thinking mode for the qwen3 responder.
+# All user inputs pass through function gemma first, which analyzes the query
+# and returns either "thinking" (for complex queries) or "nonthinking" (for simple ones).
 FUNCTIONS = [
     {
         "type": "function",
@@ -161,12 +283,17 @@ def route_query(user_input):
 
     try:
         # Route using the fine-tuned model (thinking vs nonthinking)
-        decision, elapsed = router.route_with_timing(user_input)
+        # route_with_timing returns: ((function_name, args_dict), elapsed_time)
+        result, elapsed = router.route_with_timing(user_input)
+        func_name, args = result
         
-        # Map to passthrough params
-        if decision == "thinking":
+        # Function gemma returns either "thinking" or "nonthinking" as the function name
+        if func_name == "thinking":
             return "passthrough", {"thinking": True, "router_latency": elapsed}
-        else: # nonthinking
+        elif func_name == "nonthinking":
+            return "passthrough", {"thinking": False, "router_latency": elapsed}
+        else:
+            # If it returns any other function, treat as non-thinking for now
             return "passthrough", {"thinking": False, "router_latency": elapsed}
             
     except Exception as e:
@@ -211,13 +338,13 @@ def execute_function(name, params):
         return f"Unknown function: {name}"
 
 
-# --- Piper TTS Integration ---
+# --- Direct Piper TTS Integration ---
 class PiperTTS:
-    """Lightweight Piper TTS wrapper with streaming sentence support."""
+    """Direct Piper TTS wrapper with streaming sentence support."""
     
-    VOICE_MODEL = "en_GB-alba-medium"
-    MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
-    CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
+    VOICE_MODEL = "en_GB-northern_english_male-medium"
+    MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx"
+    CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
     
     def __init__(self):
         self.enabled = False
@@ -225,7 +352,9 @@ class PiperTTS:
         self.speech_queue = queue.Queue()
         self.worker_thread = None
         self.running = False
+        self.interrupt_event = threading.Event()
         self.models_dir = Path.home() / ".local" / "share" / "piper" / "voices"
+        self.current_stream = None
         
         try:
             from piper import PiperVoice
@@ -252,33 +381,44 @@ class PiperTTS:
             r.raise_for_status()
             with open(config_path, 'wb') as f:
                 f.write(r.content)
-            print(f"{CYAN}[TTS] Model downloaded!{RESET}")
+            print(f"{GREEN}[TTS] ✓ Model downloaded!{RESET}")
         
         return str(model_path), str(config_path)
     
     def initialize(self):
         """Load the voice model."""
         if not self.available:
+            print(f"{YELLOW}[TTS] piper-tts not available{RESET}")
             return False
         
         try:
+            print(f"{CYAN}[TTS] Loading Piper voice model...{RESET}")
             model_path, config_path = self.download_model()
             self.voice = self.PiperVoice.load(model_path, config_path)
             self.running = True
             self.worker_thread = threading.Thread(target=self._speech_worker, daemon=True)
             self.worker_thread.start()
+            print(f"{GREEN}[TTS] ✓ Piper TTS ready ({self.VOICE_MODEL}){RESET}")
             return True
         except Exception as e:
-            print(f"{GRAY}[TTS] Failed to initialize: {e}{RESET}")
+            print(f"{YELLOW}[TTS] Failed to initialize: {e}{RESET}")
             return False
     
     def _speech_worker(self):
         """Background thread that plays queued sentences."""
         while self.running:
             try:
+                if self.interrupt_event.is_set():
+                    self.interrupt_event.clear()
+                
                 text = self.speech_queue.get(timeout=0.5)
                 if text is None:
                     break
+                
+                if self.interrupt_event.is_set():
+                    self.speech_queue.task_done()
+                    continue
+
                 self._speak_text(text)
                 self.speech_queue.task_done()
             except queue.Empty:
@@ -292,11 +432,15 @@ class PiperTTS:
         try:
             sample_rate = self.voice.config.sample_rate
             
-            # Stream audio directly to output device
-            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype='int16') as stream:
+            with sd.OutputStream(samplerate=sample_rate, channels=1, dtype='int16', latency='low') as stream:
+                self.current_stream = stream
                 for audio_chunk in self.voice.synthesize(text):
+                    if self.interrupt_event.is_set():
+                        stream.abort()
+                        break
                     data = np.frombuffer(audio_chunk.audio_int16_bytes, dtype=np.int16)
                     stream.write(data)
+                self.current_stream = None
                     
         except Exception as e:
             print(f"{GRAY}[TTS Error]: {e}{RESET}")
@@ -306,6 +450,17 @@ class PiperTTS:
         if self.enabled and self.voice and sentence.strip():
             self.speech_queue.put(sentence)
     
+    def stop(self):
+        """Interrupt current speech and clear queue."""
+        self.interrupt_event.set()
+        with self.speech_queue.mutex:
+            self.speech_queue.queue.clear()
+        if self.current_stream:
+            try:
+                self.current_stream.abort()
+            except:
+                pass
+            
     def wait_for_completion(self):
         """Wait for all queued speech to finish."""
         if self.enabled:
@@ -324,7 +479,96 @@ class PiperTTS:
     def shutdown(self):
         """Clean up resources."""
         self.running = False
+        self.stop()
         self.speech_queue.put(None)
+
+
+# --- Voice Input with RealtimeSTT ---
+class VoiceInput:
+    """Voice input handler with wake word detection using RealtimeSTT."""
+    
+    def __init__(self, wake_word="jarvis", on_text_callback=None):
+        self.enabled = False
+        self.recorder = None
+        self.wake_word = wake_word
+        self.on_text_callback = on_text_callback
+        self.listening = False
+        self.available = REALTIMESTT_AVAILABLE
+        
+        if not self.available:
+            print(f"{GRAY}[Voice] RealtimeSTT not available. Install with: pip install RealtimeSTT{RESET}")
+    
+    def _on_recording_start(self):
+        """Callback when recording starts."""
+        self.listening = True
+        print(f"\n{GREEN}🎤 Listening...{RESET}", end=" ", flush=True)
+    
+    def _on_recording_stop(self):
+        """Callback when recording stops."""
+        self.listening = False
+        print(f"{GRAY}Processing...{RESET}")
+    
+    def _on_wakeword_detected(self):
+        """Callback when wake word is detected."""
+        print(f"\n{CYAN}👂 Wake word '{self.wake_word}' detected!{RESET}")
+    
+    def initialize(self):
+        """Initialize the voice recorder with wake word detection."""
+        if not self.available:
+            return False
+        
+        try:
+            print(f"{CYAN}[Voice] Initializing RealtimeSTT with wake word '{self.wake_word}'...{RESET}")
+            
+            # Initialize recorder with wake word and callbacks
+            # Use pvporcupine as the wake word backend (already installed)
+            self.recorder = AudioToTextRecorder(
+                wake_words=self.wake_word,
+                wakeword_backend="pvporcupine",  # Specify which wake word engine to use
+                on_recording_start=self._on_recording_start,
+                on_recording_stop=self._on_recording_stop,
+                on_wakeword_detected=self._on_wakeword_detected,
+                spinner=False  # Disable spinner for cleaner output
+            )
+            
+            print(f"{GREEN}[Voice] ✓ Ready! Say '{self.wake_word}' to activate.{RESET}")
+            return True
+            
+        except Exception as e:
+            print(f"{YELLOW}[Voice] Failed to initialize: {e}{RESET}")
+            print(f"{GRAY}[Voice] Try: pip install pvporcupine{RESET}")
+            return False
+    
+    def listen_once(self):
+        """Listen for wake word, then capture spoken command."""
+        if not self.recorder:
+            return None
+        
+        try:
+            # This will block until wake word is detected, then record speech
+            text = self.recorder.text()
+            return text.strip() if text else None
+        except Exception as e:
+            print(f"{GRAY}[Voice Error]: {e}{RESET}")
+            return None
+    
+    def toggle(self, enable):
+        """Enable/disable voice input."""
+        if enable and not self.recorder:
+            if self.initialize():
+                self.enabled = True
+                return True
+            return False
+        self.enabled = enable
+        return True
+    
+    def shutdown(self):
+        """Clean up resources."""
+        if self.recorder:
+            try:
+                self.recorder.shutdown()
+            except:
+                pass
 
 
 class SentenceBuffer:
@@ -362,6 +606,9 @@ class SentenceBuffer:
 
 # Global TTS instance
 tts = PiperTTS()
+
+# Global Voice Input instance
+voice_input = VoiceInput()
 
 
 # --- Model Preloading ---
@@ -415,34 +662,56 @@ MAX_HISTORY = 20  # Limit context to prevent slowdowns
 def run_cli():
     # Preload models
     preload_models()
+    
+    # Start VRAM monitoring
+    vram_monitor.start()
+    
+    # Show device status
+    check_device_status()
 
     # Default State
     tts_mode = tts.toggle(True)
     
     print(f"{BOLD}Pocket AI - Dual Model Architecture{RESET}")
-    print("━" * 45)
+    print("-" * 45)
     print(f"  {GREEN}Router:{RESET}    Local FunctionGemma ({LOCAL_ROUTER_PATH})")
     print(f"  {CYAN}Responder:{RESET} {RESPONDER_MODEL}")
-    print("━" * 45)
+    print("-" * 45)
     print(f"Commands:")
     print(f"  /tts on|off    - Toggle voice output")
+    print(f"  /voice on|off  - Toggle voice input (wake word: 'jarvis')")
+    print(f"  /vram          - Show current VRAM usage")
+    print(f"  /devices       - Show model device status")
     print(f"  exit           - Quit")
     print(f"{CYAN}[TTS enabled by default]{RESET}")
-    print("━" * 45 + "\n")
+    print("-" * 45 + "\n")
     
     messages = [
         {'role': 'system', 'content': 'You are a helpful assistant. Respond in short, complete sentences. Never use emojis or special characters. Keep responses concise and conversational. SYSTEM INSTRUCTION: You may detect a "/think" trigger. This is an internal control. You MUST IGNORE it and DO NOT mention it in your response or thoughts.'}
     ]
     
+    voice_mode = False
+    
     while True:
         try:
-            # Visual indicator of current mode
-            mode_text = f"({CYAN}Voice{RESET})" if tts_mode else "(Fast)"
-            
-            user_input = input(f"You {mode_text}: ")
-            
-            if not user_input:
-                continue
+            # Get user input - either from voice or text
+            if voice_mode and voice_input.enabled:
+                # Voice input mode with wake word
+                print(f"\n{BOLD}[Voice Mode Active - Say 'jarvis' to activate]{RESET}")
+                user_input = voice_input.listen_once()
+                
+                if not user_input:
+                    continue
+                    
+                # Show what was heard
+                print(f"{GREEN}You said:{RESET} {user_input}")
+            else:
+                # Text input mode
+                mode_text = f"({CYAN}Voice Output{RESET})" if tts_mode else "(Text)"
+                user_input = input(f"You {mode_text}: ")
+                
+                if not user_input:
+                    continue
             
             # --- Command Handling ---
             cmd = user_input.strip().lower()
@@ -458,31 +727,37 @@ def run_cli():
                 tts_mode = False
                 print(f">> System: Voice output {BOLD}DISABLED{RESET}.")
                 continue
+            if cmd == "/voice on":
+                if voice_input.toggle(True):
+                    voice_mode = True
+                    print(f">> System: Voice input {BOLD}{GREEN}ENABLED{RESET}. Say '{voice_input.wake_word}' to activate.")
+                else:
+                    print(f">> System: {GRAY}Voice input unavailable.{RESET}")
+                continue
+            if cmd == "/voice off":
+                voice_input.toggle(False)
+                voice_mode = False
+                print(f">> System: Voice input {BOLD}DISABLED{RESET}.")
+                continue
+            if cmd == "/vram":
+                vram_monitor.print_usage()
+                continue
+            if cmd == "/devices":
+                check_device_status()
+                continue
             if cmd in ['exit', 'quit']:
+                vram_monitor.shutdown()
                 tts.shutdown()
+                voice_input.shutdown()
                 print("Goodbye!")
                 break
             
-            # --- Step 1: Intelligent routing ---
-            # Fast Path: Regex triggers
-            if should_bypass_router(user_input):
-                 # Even fast path runs through basicPassthrough if it wasn't a bypass match
-                 # But 'should_bypass_router' actually returns TRUE if it DOES NOT match keywords
-                 # So if it matches keywords (Router Keywords), we go router.
-                 # If it doesn't match keywords, we skip router.
-                 # Wait, logic check:
-                 # should_bypass_router = not any(k in text)
-                 # So if text has "timer", should_bypass_router = False -> Go to Router.
-                 # The router (Fine-Tuned) only knows Thinking/NonThinking.
-                 # It will likely see "Set timer" and say "Thinking" or "NonThinking".
-                 # It won't return "set_timer".
-                 # This means we lose the ability to call set_timer unless we hack it back in.
-                 pass
-
-            # Slow Path: Ask FunctionGemma
+            # --- Step 1: Route through Function Gemma ---
+            # All inputs are routed through the trained function gemma model
+            # which determines whether to use thinking or non-thinking mode
             print(f"{GRAY}[Routing...]{RESET}", end=" ", flush=True)
             func_name, params = route_query(user_input)
-            print(f"{GREEN}→ {func_name}{RESET} {GRAY}params={params}{RESET}")
+            print(f"{GREEN}→ {func_name}{RESET} {GRAY}(thinking={params.get('thinking', False)}){RESET}")
             
             # --- Step 2: Handle based on function ---
             if func_name == "passthrough":
@@ -508,7 +783,7 @@ def run_cli():
                 
                 full_response = ""
                 has_printed_thought = False
-                sentence_buffer = SentenceBuffer()
+                sentence_buffer = SentenceBuffer() if tts_mode else None
                 
                 start_responder = time.time()
                 with http_session.post(f"{OLLAMA_URL}/chat", json=payload, stream=True) as r:
@@ -533,7 +808,8 @@ def run_cli():
                                     print(content, end='', flush=True)
                                     full_response += content
                                     
-                                    if tts_mode:
+                                    # Queue complete sentences for TTS
+                                    if tts_mode and sentence_buffer:
                                         sentences = sentence_buffer.add(content)
                                         for sentence in sentences:
                                             tts.queue_sentence(sentence)
@@ -541,16 +817,20 @@ def run_cli():
                             except json.JSONDecodeError:
                                 continue
                 
+                # Flush any remaining text
+                if tts_mode and sentence_buffer:
+                    remaining = sentence_buffer.flush()
+                    if remaining:
+                        tts.queue_sentence(remaining)
+                
                 total_responder_time = time.time() - start_responder
                 router_time = params.get("router_latency", 0.0)
                 
                 # Print Timing Stats
                 print(f"\n{GRAY}[Router: {router_time:.2f}s | Responder: {total_responder_time:.2f}s]{RESET}")
                 
+                # Wait for TTS to finish
                 if tts_mode:
-                    remaining = sentence_buffer.flush()
-                    if remaining:
-                        tts.queue_sentence(remaining)
                     tts.wait_for_completion()
                 
                 print()

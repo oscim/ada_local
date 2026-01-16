@@ -10,7 +10,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal
 
 from config import (
-    RESPONDER_MODEL, OLLAMA_URL, MAX_HISTORY, GRAY, RESET, CYAN, GREEN
+    RESPONDER_MODEL, OLLAMA_URL, MAX_HISTORY, GRAY, RESET, CYAN, GREEN, WAKE_WORD
 )
 from core.stt import STTListener
 from core.llm import route_query, should_bypass_router, http_session
@@ -95,7 +95,7 @@ class VoiceAssistant(QObject):
         
         self.running = True
         self.stt_listener.start()
-        print(f"{CYAN}[VoiceAssistant] Voice assistant started. Say '{GREEN}Ada{RESET}{CYAN}' to activate.{RESET}")
+        print(f"{CYAN}[VoiceAssistant] Voice assistant started. Say '{GREEN}{WAKE_WORD}{RESET}{CYAN}' to activate.{RESET}")
     
     def stop(self):
         """Stop the voice assistant."""

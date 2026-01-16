@@ -347,7 +347,8 @@ class HomeScenesCard(CardWidget):
         """Turn off all discovered devices."""
         for device in self._devices:
             try:
-                await kasa_manager.turn_off(device['ip'])
+                dev_obj = device.get('obj')
+                await kasa_manager.turn_off(device['ip'], dev=dev_obj)
             except Exception as e:
                 print(f"Focus mode error for {device['alias']}: {e}")
     
@@ -355,12 +356,13 @@ class HomeScenesCard(CardWidget):
         """Dim all dimmable devices to 40%."""
         for device in self._devices:
             try:
+                dev_obj = device.get('obj')
                 if device.get('brightness') is not None:
-                    await kasa_manager.set_brightness(device['ip'], 40)
-                    await kasa_manager.turn_on(device['ip'])
+                    await kasa_manager.set_brightness(device['ip'], 40, dev=dev_obj)
+                    await kasa_manager.turn_on(device['ip'], dev=dev_obj)
                 else:
                     # For non-dimmable, just turn on
-                    await kasa_manager.turn_on(device['ip'])
+                    await kasa_manager.turn_on(device['ip'], dev=dev_obj)
             except Exception as e:
                 print(f"Relax mode error for {device['alias']}: {e}")
 
@@ -623,8 +625,10 @@ class DashboardLoader(QThread):
                 print("[Dashboard] Starting Kasa device discovery...")
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
-                devices = loop.run_until_complete(kasa_manager.discover_devices())
+                devices_dict = loop.run_until_complete(kasa_manager.discover_devices())
                 loop.close()
+                # Convert dict to list for GUI
+                devices = list(devices_dict.values()) if isinstance(devices_dict, dict) else devices_dict
                 print(f"[Dashboard] Found {len(devices)} devices")
             except Exception as e:
                 print(f"[Dashboard] Kasa discovery error: {e}")

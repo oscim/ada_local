@@ -174,19 +174,11 @@ class FunctionExecutor:
         try:
             for ip, info in target_devices:
                 alias = info.get('alias', device_name)
-                dev_obj = info.get('obj') # Get the cached device object
+                # Don't use cached device object - it was created in a different event loop
                 success = False
                 
-                if action == "on":
-                    success = loop.run_until_complete(self.kasa_manager.turn_on(ip, dev=dev_obj))
-                    action_desc = "Turned on"
-                elif action == "off":
-                    success = loop.run_until_complete(self.kasa_manager.turn_off(ip, dev=dev_obj))
-                    action_desc = "Turned off"
-                elif action == "dim" and brightness is not None:
-                    success = loop.run_until_complete(self.kasa_manager.set_brightness(ip, brightness, dev=dev_obj))
-                    action_desc = f"Set brightness to {brightness}% for"
-                elif action == "color" and color:
+                # Handle color parameter with action="on" (matches training data format)
+                if action == "on" and color:
                     # Basic color map
                     colors = {
                         "red": (0, 100, 100),
@@ -199,32 +191,47 @@ class FunctionExecutor:
                         "pink": (300, 100, 100),
                         "white": (0, 0, 100),
                         "warm": (30, 80, 100),
-                        "daylight": (0, 0, 100)
+                        "warm white": (30, 80, 100),
+                        "cool white": (0, 0, 100),
+                        "soft white": (30, 60, 100),
+                        "daylight": (0, 0, 100),
+                        "candle light": (30, 100, 50),
+                        "amber": (30, 100, 100),
+                        "magenta": (300, 100, 100),
                     }
                     
                     target_hsv = colors.get(color.lower())
                     if target_hsv:
                         h, s, v = target_hsv
-                        success = loop.run_until_complete(self.kasa_manager.set_hsv(ip, h, s, v, dev=dev_obj))
+                        success = loop.run_until_complete(self.kasa_manager.set_hsv(ip, h, s, v))
+                        # Also turn on the light
+                        if success:
+                            loop.run_until_complete(self.kasa_manager.turn_on(ip))
                         action_desc = f"Set color to {color} for"
                     else:
                         success = False
                         action_desc = f"Unknown color '{color}' for"
-
+                elif action == "on":
+                    success = loop.run_until_complete(self.kasa_manager.turn_on(ip))
+                    action_desc = "Turned on"
+                elif action == "off":
+                    success = loop.run_until_complete(self.kasa_manager.turn_off(ip))
+                    action_desc = "Turned off"
+                elif action == "dim" and brightness is not None:
+                    success = loop.run_until_complete(self.kasa_manager.set_brightness(ip, brightness))
+                    action_desc = f"Set brightness to {brightness}% for"
                 elif action == "toggle":
                     if info.get("is_on"):
-                        success = loop.run_until_complete(self.kasa_manager.turn_off(ip, dev=dev_obj))
+                        success = loop.run_until_complete(self.kasa_manager.turn_off(ip))
                         action_desc = "Turned off"
                     else:
-                        success = loop.run_until_complete(self.kasa_manager.turn_on(ip, dev=dev_obj))
+                        success = loop.run_until_complete(self.kasa_manager.turn_on(ip))
                         action_desc = "Turned on"
                 else:
                     action_desc = f"Unknown action {action} for"
                 
                 if success:
                     results.append(f"{action_desc} {alias}")
-            
-            loop.close()
             
             if not results:
                 return {"success": False, "message": "Failed to control any devices", "data": None}
@@ -236,9 +243,13 @@ class FunctionExecutor:
             }
             
         except Exception as e:
-            if loop.is_running():
-                loop.close()
+            print(f"[FunctionExecutor] Light control exception: {e}")
             return {"success": False, "message": f"Light control failed: {e}", "data": None}
+        finally:
+            # Always close the loop, whether success or failure
+            if loop and not loop.is_closed():
+                loop.close()
+
     
     def _set_timer(self, params: Dict) -> Dict:
         """Set a countdown timer."""

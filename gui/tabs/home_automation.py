@@ -22,8 +22,10 @@ class DataFetchThread(QThread):
             print("[HomeAutomation] Starting Kasa device discovery...")
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            devices = loop.run_until_complete(kasa_manager.discover_devices())
+            devices_dict = loop.run_until_complete(kasa_manager.discover_devices())
             loop.close()
+            # Convert dict to list for GUI
+            devices = list(devices_dict.values()) if isinstance(devices_dict, dict) else devices_dict
             print(f"[HomeAutomation] Found {len(devices)} devices")
             self.devices_found.emit(devices)
         except Exception as e:
@@ -33,10 +35,16 @@ class DataFetchThread(QThread):
 class ActionThread(QThread):
     finished = Signal(bool)
     
-    def __init__(self, action, *args):
+    def __init__(self, action, ip, *args):
         super().__init__()
         self.action = action
+        self.ip = ip
         self.args = args
+        # Last arg might be device object
+        self.dev_obj = args[-1] if args and hasattr(args[-1], 'turn_on') else None
+        # Remove dev_obj from args if present
+        if self.dev_obj:
+            self.args = args[:-1]
         
     def run(self):
         try:
@@ -44,13 +52,15 @@ class ActionThread(QThread):
             asyncio.set_event_loop(loop)
             success = False
             if self.action == "on":
-                success = loop.run_until_complete(kasa_manager.turn_on(*self.args))
+                success = loop.run_until_complete(kasa_manager.turn_on(self.ip, dev=self.dev_obj))
             elif self.action == "off":
-                success = loop.run_until_complete(kasa_manager.turn_off(*self.args))
+                success = loop.run_until_complete(kasa_manager.turn_off(self.ip, dev=self.dev_obj))
             elif self.action == "brightness":
-                success = loop.run_until_complete(kasa_manager.set_brightness(*self.args))
+                level = self.args[0] if self.args else 100
+                success = loop.run_until_complete(kasa_manager.set_brightness(self.ip, level, dev=self.dev_obj))
             elif self.action == "color":
-                success = loop.run_until_complete(kasa_manager.set_hsv(*self.args))
+                h, s, v = self.args[0], self.args[1], self.args[2]
+                success = loop.run_until_complete(kasa_manager.set_hsv(self.ip, h, s, v, dev=self.dev_obj))
             loop.close()
             self.finished.emit(success)
         except Exception as e:
@@ -64,6 +74,7 @@ class DeviceCard(QFrame):
     def __init__(self, device_info, parent=None):
         super().__init__(parent)
         self.device_info = device_info
+        self.dev_obj = device_info.get('obj')  # Cache device object
         self.ip = device_info['ip']
         self.is_bulb = "Bulb" in device_info.get("type", "") or device_info.get("brightness") is not None
         
@@ -146,12 +157,12 @@ class DeviceCard(QFrame):
             
     def _on_toggle(self, checked):
         action = "on" if checked else "off"
-        self.worker = ActionThread(action, self.ip)
+        self.worker = ActionThread(action, self.ip, self.dev_obj)
         self.worker.start()
         
     def _on_brightness_change(self):
         val = self.slider.value()
-        self.worker_b = ActionThread("brightness", self.ip, val)
+        self.worker_b = ActionThread("brightness", self.ip, val, self.dev_obj)
         self.worker_b.start()
 
     def _on_color_changed(self, color):
@@ -161,7 +172,7 @@ class DeviceCard(QFrame):
         v = int(color.valueF() * 100)
         
         # Kasa expects h(0-360), s(0-100), v(0-100)
-        self.worker_c = ActionThread("color", self.ip, h, s, v)
+        self.worker_c = ActionThread("color", self.ip, h, s, v, self.dev_obj)
         self.worker_c.start()
 
 class HomeAutomationTab(QWidget):

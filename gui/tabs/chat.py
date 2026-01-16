@@ -202,7 +202,7 @@ class ChatTab(QWidget):
         
         QTimer.singleShot(50, self.scroll_to_bottom)
 
-    def add_streaming_widgets(self, thinking_ui, response_bubble):
+    def add_streaming_widgets(self, thinking_ui, search_indicator, response_bubble):
         """Add streaming widgets."""
         wrapper = QWidget()
         wrapper.setStyleSheet("background: transparent;")
@@ -211,6 +211,7 @@ class ChatTab(QWidget):
         wrapper_layout.setSpacing(8)
         
         wrapper_layout.addWidget(thinking_ui)
+        wrapper_layout.addWidget(search_indicator)
         
         bubble_wrapper = QWidget()
         bubble_wrapper.setStyleSheet("background: transparent;")

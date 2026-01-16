@@ -12,16 +12,15 @@ class KasaManager:
     async def discover_devices(self) -> Dict[str, Any]:
         """
         Scans the network for Kasa devices.
-        Returns a dictionary of found devices keyed by IP or Alias.
+        Returns a dictionary of found devices keyed by IP.
         """
         print("Discovering Kasa devices...")
         try:
             # Increased timeout for more robust discovery
             found_devices = await Discover.discover(timeout=5) 
-            self.devices = found_devices
             
-            # Convert to a simpler list format for the GUI
-            device_list = []
+            # Convert to a dictionary format with device info
+            device_dict = {}
             for ip, dev in found_devices.items():
                 await dev.update() # Ensure we have the latest state
                 
@@ -31,7 +30,7 @@ class KasaManager:
                 is_dimmable = light_mod and light_mod.has_feature("brightness")
                 is_color = light_mod and light_mod.has_feature("hsv")
 
-                info = {
+                device_dict[ip] = {
                     "alias": dev.alias,
                     "ip": ip,
                     "model": dev.model,
@@ -42,12 +41,13 @@ class KasaManager:
                     "hsv": light_mod.hsv if is_color else None,
                     "obj": dev 
                 }
-                device_list.append(info)
             
-            return device_list
+            # Store the dictionary
+            self.devices = device_dict
+            return device_dict
         except Exception as e:
             print(f"Error discovering devices: {e}")
-            return []
+            return {}
 
     async def _get_light_module(self, ip: str):
         """Helper to get a fresh device and its light module."""

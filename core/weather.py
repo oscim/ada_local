@@ -1,5 +1,6 @@
 import requests
 from datetime import datetime
+from core.settings_store import settings
 
 class WeatherManager:
     """
@@ -7,12 +8,18 @@ class WeatherManager:
     """
     def __init__(self):
         self.base_url = "https://api.open-meteo.com/v1/forecast"
-        # Default to New York, NY for now. 
-        # In a real app, we'd use IP-geolocation or user config.
-        self.lat = 40.7128
-        self.lon = -74.0060
         self.current_weather = None
         self.last_fetch = None
+    
+    @property
+    def lat(self):
+        """Get latitude from settings."""
+        return settings.get("weather.latitude", 40.7128)
+    
+    @property
+    def lon(self):
+        """Get longitude from settings."""
+        return settings.get("weather.longitude", -74.0060)
 
     def get_weather(self):
         """

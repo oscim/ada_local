@@ -73,16 +73,43 @@ def add_task(text: str, priority: str = None) -> str:
 
 def web_search(query: str) -> str:
     """
-    Search the web for information.
+    Search the web for information using DuckDuckGo.
+    Returns up to 5 search results including titles, snippets, and URLs.
+    
+    Use this when the user asks to:
+    - Search for information online
+    - Look up current events or news
+    - Find facts, definitions, or explanations
+    - Research a topic
     
     Args:
-        query: Search query
+        query: Search query string (e.g., "Python programming best practices")
+    
+    Returns:
+        Search results with titles, body snippets (200 chars), and URLs
     """
     return "result"
 
 def get_system_info() -> str:
     """
-    Get current system state including timers, calendar, tasks, devices, and weather.
+    Get comprehensive current system state snapshot.
+    
+    Returns information about:
+    - Current time and date
+    - Active countdown timers (label, remaining time)
+    - Upcoming alarms (time, label)
+    - Today's calendar events (title, time)
+    - Pending tasks from to-do list (text, completion status)
+    - Smart home devices (name, on/off status, type)
+    - Current weather (temperature, condition, high/low)
+    - Recent news headlines (title, category, URL)
+    
+    Use this when the user asks:
+    - "What's on my schedule today?"
+    - "What's my current status?"
+    - "What do I have coming up?"
+    - "Give me a summary of everything"
+    - Questions about their timers, tasks, or calendar
     """
     return "result"
 

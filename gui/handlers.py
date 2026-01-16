@@ -35,6 +35,8 @@ class ChatWorker(QObject):
     toast = Signal(str, bool)  # message, success
     set_timer_signal = Signal(int, str)  # seconds, label
     reload_alarms = Signal()  # trigger alarm list reload
+    search_start = Signal(str)  # query
+    search_end = Signal()
     
     def __init__(self, user_text: str, messages: list, is_tts_enabled: bool, 
                  current_session_id: str, stop_event):
@@ -59,7 +61,17 @@ class ChatWorker(QObject):
             # Handle action functions
             if func_name in ACTION_FUNCTIONS:
                 self.status.emit(f"Executing {func_name}...")
+                
+                # Emit search start for web_search
+                if func_name == "web_search":
+                    query = params.get("query", "")
+                    self.search_start.emit(query)
+                
                 result = function_executor.execute(func_name, params)
+                
+                # Emit search end for web_search
+                if func_name == "web_search":
+                    self.search_end.emit()
                 
                 # Emit toast notification
                 self.toast.emit(result["message"], result["success"])
@@ -72,8 +84,11 @@ class ChatWorker(QObject):
                 elif func_name == "set_alarm" and result["success"]:
                     self.reload_alarms.emit()
                 
+                # Enable thinking for web_search
+                enable_thinking = (func_name == "web_search")
+                
                 # Generate Qwen response with context
-                self._generate_response_with_context(func_name, result)
+                self._generate_response_with_context(func_name, result, enable_thinking)
                 
             # Handle get_system_info (context query)
             elif func_name == "get_system_info":
@@ -98,7 +113,7 @@ class ChatWorker(QObject):
         finally:
             self.done.emit()
     
-    def _generate_response_with_context(self, func_name: str, result: dict):
+    def _generate_response_with_context(self, func_name: str, result: dict, enable_thinking: bool = False):
         """Generate a Qwen response with function result as context."""
         # Build system message with context
         if func_name == "get_system_info" and result.get("success"):
@@ -130,7 +145,27 @@ class ChatWorker(QObject):
         else:
             # Action function result
             status = "succeeded" if result.get("success") else "failed"
-            context_msg = f"ACTION RESULT: {func_name} {status}. {result.get('message', '')}"
+            
+            # Special handling for web_search to include full results
+            if func_name == "web_search" and result.get("success") and result.get("data"):
+                search_data = result.get("data", {})
+                query = search_data.get("query", "")
+                results = search_data.get("results", [])
+                
+                if results:
+                    context_msg = f"SEARCH RESULTS for '{query}':\n\n"
+                    for i, r in enumerate(results, 1):
+                        title = r.get("title", "")
+                        body = r.get("body", "")
+                        url = r.get("url", "")
+                        context_msg += f"{i}. {title}\n"
+                        context_msg += f"   {body}\n"
+                        context_msg += f"   URL: {url}\n\n"
+                    context_msg += "Use the above search results to answer the user's question. Include relevant URLs in your response using markdown link format [text](url)."
+                else:
+                    context_msg = f"ACTION RESULT: {func_name} {status}. {result.get('message', '')}"
+            else:
+                context_msg = f"ACTION RESULT: {func_name} {status}. {result.get('message', '')}"
         
         # Prepare messages with context
         max_hist = app_settings.get("general.max_history", MAX_HISTORY)
@@ -154,13 +189,13 @@ class ChatWorker(QObject):
             "model": model,
             "messages": self.messages,
             "stream": True,
-            "think": False,  # No thinking for action responses
+            "think": enable_thinking,  # Enable thinking for web_search
             "keep_alive": "5m"  # Longer keep-alive for voice assistant
         }
         
         sentence_buffer = SentenceBuffer()
         self.full_response = ""
-        self.think_start.emit(False)
+        self.think_start.emit(enable_thinking)
         
         with http_session.post(f"{ollama_url}/api/chat", json=payload, stream=True) as r:
             r.raise_for_status()
@@ -173,6 +208,11 @@ class ChatWorker(QObject):
                     try:
                         chunk = json.loads(line.decode('utf-8'))
                         msg = chunk.get('message', {})
+                        
+                        # Handle thinking chunks (for web_search)
+                        if 'thinking' in msg and msg['thinking']:
+                            thought = msg['thinking']
+                            self.thought_chunk.emit(thought)
                         
                         if 'content' in msg and msg['content']:
                             content = msg['content']
@@ -289,6 +329,7 @@ class ChatHandlers(QObject):
         self.streaming_state = {
             'response_bubble': None,
             'thinking_ui': None,
+            'search_indicator': None,
             'response_buffer': '',
             'thought_buffer': '',
             'is_generating': False,
@@ -428,6 +469,17 @@ class ChatHandlers(QObject):
                     planner.alarm_component.reload()
         except Exception as e:
             print(f"[Handlers] Alarm reload failed: {e}")
+    
+    def _on_search_start(self, query: str):
+        """Called when web search starts."""
+        if self.streaming_state['search_indicator']:
+            self.streaming_state['search_indicator'].add_query(query)
+            self.streaming_state['search_indicator'].setVisible(True)
+    
+    def _on_search_end(self):
+        """Called when web search completes."""
+        if self.streaming_state['search_indicator']:
+            self.streaming_state['search_indicator'].complete()
             
     def _on_error(self, text):
         self.main_window.add_message_bubble("system", f"Error: {text}", is_thinking=True)
@@ -485,22 +537,25 @@ class ChatHandlers(QObject):
         self._stop_event = threading.Event()
         
         # Create streaming UI containers
-        from gui.components import MessageBubble, ThinkingExpander
+        from gui.components import MessageBubble, ThinkingExpander, SearchIndicator
         
         thinking_ui = ThinkingExpander()
+        search_indicator = SearchIndicator()
         response_bubble = MessageBubble("assistant", "")
         
         self.streaming_state['thinking_ui'] = thinking_ui
+        self.streaming_state['search_indicator'] = search_indicator
         self.streaming_state['response_bubble'] = response_bubble
         self.streaming_state['response_buffer'] = ''
         self.streaming_state['thought_buffer'] = ''
         self.streaming_state['thinking_enabled'] = False  # Will be set by think_start signal
         
-        # Hide thinking UI initially - will be shown only if thinking is enabled
+        # Hide indicators initially - will be shown only if their respective modes are enabled
         thinking_ui.setVisible(False)
+        search_indicator.setVisible(False)
         
         # Add to UI
-        self.main_window.add_streaming_widgets(thinking_ui, response_bubble)
+        self.main_window.add_streaming_widgets(thinking_ui, search_indicator, response_bubble)
 
         # Start background worker
         self._thread = QThread(self)
@@ -522,6 +577,8 @@ class ChatHandlers(QObject):
         self._worker.toast.connect(self._on_toast)
         self._worker.set_timer_signal.connect(self._on_set_timer)
         self._worker.reload_alarms.connect(self._on_reload_alarms)
+        self._worker.search_start.connect(self._on_search_start)
+        self._worker.search_end.connect(self._on_search_end)
         self._worker.done.connect(self._on_done)
         self._worker.done.connect(self._thread.quit)
         self._worker.done.connect(self._worker.deleteLater)

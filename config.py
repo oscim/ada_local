@@ -9,9 +9,9 @@ LOCAL_ROUTER_PATH = "./merged_model"
 MAX_HISTORY = 20
 
 # --- TTS Configuration ---
-TTS_VOICE_MODEL = "en_GB-alba-medium"
-TTS_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx"
-TTS_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alba/medium/en_GB-alba-medium.onnx.json"
+TTS_VOICE_MODEL = "en_GB-northern_english_male-medium"
+TTS_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx"
+TTS_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
 
 # --- STT Configuration ---
 # Using RealTimeSTT for real-time speech-to-text

@@ -61,6 +61,7 @@ class STTListener:
                 wakeword_backend="pvporcupine",  # Use Porcupine for wake word detection
                 wake_words=WAKE_WORD,  # Built-in wake word detection
                 wake_words_sensitivity=WAKE_WORD_SENSITIVITY,  # Sensitivity (0.0-1.0)
+                on_wakeword_detected=self._on_wakeword_detected,
             )
             
             # Verify device after initialization
@@ -72,7 +73,6 @@ class STTListener:
             
             self.initialized = True
             print(f"{CYAN}[STT] ✓ RealTimeSTT initialized successfully (model: {REALTIMESTT_MODEL}, wake word: '{WAKE_WORD}'){RESET}")
-            print(f"{CYAN}[STT] Say '{WAKE_WORD}' then speak.{RESET}")
             return True
         except ImportError:
             print(f"{GRAY}[STT] ✗ RealTimeSTT not installed. Install with: pip install realtimestt{RESET}")
@@ -83,6 +83,13 @@ class STTListener:
             traceback.print_exc()
             return False
     
+    def _on_wakeword_detected(self):
+        """Callback when wake word is detected."""
+        print(f"\n{CYAN}[STT] 👂 Wake word '{WAKE_WORD}' detected! Listening...{RESET}")
+        # Notify callback if set
+        if self.wake_word_callback:
+            self.wake_word_callback()
+
     def start(self):
         """Start listening."""
         if not self.initialized:
@@ -95,7 +102,6 @@ class STTListener:
         
         self.running = True
         print(f"{CYAN}[STT] Starting RealTimeSTT listener...{RESET}")
-        print(f"{CYAN}[STT] Listening for wake word '{WAKE_WORD}'...{RESET}")
         
         # Start RealTimeSTT in a background thread
         try:
@@ -119,11 +125,10 @@ class STTListener:
                 if not self.recorder:
                     break
                 
-                print(f"{GRAY}[STT] ⏳ Waiting for wake word '{WAKE_WORD}'... (blocking on recorder.text()){RESET}")
+                print(f"{GRAY}[STT] ⏳ Waiting for wake word '{WAKE_WORD}'...{RESET}")
                 
                 # recorder.text() blocks until wake word is detected, then returns transcribed text
                 transcription_start = time.time()
-                print(f"{CYAN}[STT] 🎤 Wake word detected! Starting transcription...{RESET}")
                 text = self.recorder.text()
                 transcription_time = time.time() - transcription_start
                 
@@ -137,11 +142,7 @@ class STTListener:
                     print(f"{CYAN}[STT] 🧹 Cleaned text (after removing wake word): '{text_clean}'{RESET}")
                     
                     if text_clean:
-                        print(f"{CYAN}[STT] ✓ Wake word '{WAKE_WORD}' detected!{RESET}")
                         print(f"{CYAN}[STT] 🔊 Speech recognized: '{text_clean}'{RESET}")
-                        
-                        # Trigger wake word callback
-                        self.wake_word_callback()
                         
                         # Pass transcribed speech to callback
                         self.speech_callback(text_clean)
@@ -161,8 +162,8 @@ class STTListener:
         self.running = False
         if self.recorder:
             try:
-                # RealTimeSTT will stop when we exit the loop
-                pass
+                print(f"{CYAN}[STT] Shutting down recorder...{RESET}")
+                self.recorder.shutdown()
             except Exception as e:
                 print(f"{GRAY}[STT] Error stopping recorder: {e}{RESET}")
         if self.listening_thread:

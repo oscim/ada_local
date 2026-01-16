@@ -30,6 +30,11 @@ DEFAULT_SETTINGS = {
     "general": {
         "max_history": 20,
         "auto_fetch_news": True
+    },
+    "weather": {
+        "latitude": 40.7128,
+        "longitude": -74.0060,
+        "city": "New York, NY"
     }
 }
 

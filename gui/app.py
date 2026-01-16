@@ -326,8 +326,8 @@ class MainWindow(FluentWindow):
     def add_message_bubble(self, role: str, text: str, is_thinking: bool = False):
         if self.chat_tab: self.chat_tab.add_message_bubble(role, text, is_thinking)
     
-    def add_streaming_widgets(self, thinking_ui, response_bubble):
-        if self.chat_tab: self.chat_tab.add_streaming_widgets(thinking_ui, response_bubble)
+    def add_streaming_widgets(self, thinking_ui, search_indicator, response_bubble):
+        if self.chat_tab: self.chat_tab.add_streaming_widgets(thinking_ui, search_indicator, response_bubble)
     
     def clear_chat_display(self):
         if self.chat_tab: self.chat_tab.clear_chat_display()

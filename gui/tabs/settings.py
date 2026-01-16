@@ -256,6 +256,40 @@ class SwitchCard(SettingCard):
         self.checked_changed.emit(checked)
 
 
+class TextInputCard(SettingCard):
+    """Setting card with a text input field."""
+    
+    value_changed = Signal(str)
+    
+    def __init__(self, icon, title, description, key_path: str, 
+                 placeholder: str = "", parent=None):
+        super().__init__(icon, title, description, parent)
+        self.key_path = key_path
+        
+        self.input = LineEdit(self)
+        self.input.setMinimumWidth(200)
+        self.input.setPlaceholderText(placeholder)
+        
+        current = settings.get(key_path, "")
+        self.input.setText(str(current))
+        
+        self.input.textChanged.connect(self._on_changed)
+        
+        self.hBoxLayout.addWidget(self.input, 0, Qt.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+    
+    def _on_changed(self, text: str):
+        # Try to convert to float if it looks like a number
+        try:
+            value = float(text) if text else text
+            settings.set(self.key_path, value)
+            self.value_changed.emit(text)
+        except ValueError:
+            # Keep as string
+            settings.set(self.key_path, text)
+            self.value_changed.emit(text)
+
+
 class SettingsTab(ScrollArea):
     """
     Comprehensive Settings Tab with model selection and preferences.
@@ -380,6 +414,43 @@ class SettingsTab(ScrollArea):
         self.voice_group.addSettingCard(self.tts_voice_card)
         
         self.expandLayout.addWidget(self.voice_group)
+
+        # ─────────────────────────────────────────────────────────────
+        # Weather Location Group
+        # ─────────────────────────────────────────────────────────────
+        self.weather_group = SettingCardGroup("Weather Location", self.scrollWidget)
+        
+        self.city_card = TextInputCard(
+            FIF.PIN,
+            "City Name",
+            "Display name for your location",
+            "weather.city",
+            "New York, NY",
+            self.weather_group
+        )
+        self.weather_group.addSettingCard(self.city_card)
+        
+        self.latitude_card = TextInputCard(
+            FIF.PIN,
+            "Latitude",
+            "Latitude coordinate (-90 to 90)",
+            "weather.latitude",
+            "40.7128",
+            self.weather_group
+        )
+        self.weather_group.addSettingCard(self.latitude_card)
+        
+        self.longitude_card = TextInputCard(
+            FIF.GLOBE,
+            "Longitude",
+            "Longitude coordinate (-180 to 180)",
+            "weather.longitude",
+            "-74.0060",
+            self.weather_group
+        )
+        self.weather_group.addSettingCard(self.longitude_card)
+        
+        self.expandLayout.addWidget(self.weather_group)
 
         # ─────────────────────────────────────────────────────────────
         # General Group
