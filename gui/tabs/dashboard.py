@@ -13,7 +13,7 @@ from qfluentwidgets import (
 
 from core.news import news_manager
 from core.tasks import task_manager
-from core.calendar import calendar_manager
+from core.calendar_manager import calendar_manager
 from core.kasa_control import kasa_manager
 from datetime import datetime, timedelta
 import asyncio

@@ -13,7 +13,7 @@ from qfluentwidgets.components.date_time.fast_calendar_view import FastCalendarV
 from qfluentwidgets.components.date_time.calendar_picker import CalendarPicker
 from qfluentwidgets.components.date_time.time_picker import TimePicker
 
-from core.calendar import calendar_manager
+from core.calendar_manager import calendar_manager
 from datetime import datetime
 
 class AddEventDialog(MessageBoxBase):
