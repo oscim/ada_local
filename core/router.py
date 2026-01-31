@@ -10,6 +10,10 @@ from typing import Literal, Tuple, Dict, Any
 import time
 import re
 import json
+import os
+from huggingface_hub import snapshot_download
+
+from config import LOCAL_ROUTER_PATH, HF_ROUTER_REPO
 
 # Debug flag - set to True to see Gemma's raw response
 DEBUG_ROUTER = True
@@ -154,10 +158,45 @@ VALID_FUNCTIONS = {
 }
 
 
+def ensure_model_available(model_path: str = LOCAL_ROUTER_PATH) -> str:
+    """
+    Ensure the router model is available locally.
+    Downloads from Hugging Face if not found.
+    
+    Returns:
+        str: Path to the model (local or downloaded)
+    """
+    if os.path.exists(model_path) and os.path.isdir(model_path):
+        # Check for essential files
+        if os.path.exists(os.path.join(model_path, "model.safetensors")):
+            return model_path
+    
+    # Download from Hugging Face
+    print(f"[Router] Model not found at {model_path}")
+    print(f"[Router] Downloading from Hugging Face: {HF_ROUTER_REPO}...")
+    
+    try:
+        downloaded_path = snapshot_download(
+            repo_id=HF_ROUTER_REPO,
+            local_dir=model_path,
+            local_dir_use_symlinks=False
+        )
+        print(f"[Router] ✓ Model downloaded to {downloaded_path}")
+        return downloaded_path
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download model from {HF_ROUTER_REPO}: {e}\n"
+            f"Train the model locally with: python train_function_gemma.py"
+        )
+
+
 class FunctionGemmaRouter:
     """Routes user prompts to appropriate functions using fine-tuned FunctionGemma."""
     
-    def __init__(self, model_path: str = "./merged_model", compile_model: bool = False):
+    def __init__(self, model_path: str = LOCAL_ROUTER_PATH, compile_model: bool = False):
+        # Ensure model is available (download from HF if needed)
+        model_path = ensure_model_available(model_path)
+        
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Loading FunctionGemma Router on {device.upper()}...")
         start = time.time()
@@ -173,6 +212,7 @@ class FunctionGemmaRouter:
             device_map=device,
         )
         self.model.eval()
+
         
         # Compile for speed (PyTorch 2.0+)
         if compile_model:
