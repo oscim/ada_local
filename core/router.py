@@ -3,20 +3,29 @@ FunctionGemma Router - Routes user prompts to appropriate functions.
 Supports 9 functions: 6 actions, 1 context, 2 passthrough.
 """
 
+import os
+import warnings
+
+# Suppress transformers warnings before importing
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+warnings.filterwarnings("ignore", message=".*generation flags are not valid.*")
+
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, logging as transformers_logging
 from transformers.utils import get_json_schema
 from typing import Literal, Tuple, Dict, Any
 import time
 import re
 import json
-import os
 from huggingface_hub import snapshot_download
+
+# Suppress transformers logging
+transformers_logging.set_verbosity_error()
 
 from config import LOCAL_ROUTER_PATH, HF_ROUTER_REPO
 
 # Debug flag - set to True to see Gemma's raw response
-DEBUG_ROUTER = True
+DEBUG_ROUTER = False
 
 
 # --- Tool Definitions (all 9 functions) ---
