@@ -37,10 +37,10 @@ Before you begin, make sure you have:
 
 ### Required Software
 
-| Software | Purpose | Installation |
-|----------|---------|--------------|
-| **Python 3.10+** | Runtime | [python.org](https://www.python.org/downloads/) |
-| **Ollama** | Local AI model server | [ollama.com](https://ollama.com) |
+| Software | Purpose | Download |
+|----------|---------|----------|
+| **Miniconda** | Python environment manager | [miniconda.io](https://docs.anaconda.com/miniconda/) |
+| **Ollama** | Local AI model server | [ollama.com](https://ollama.com/download) |
 | **NVIDIA GPU** (Recommended) | Faster AI inference | GPU with 4GB+ VRAM |
 
 ### Hardware Recommendations
@@ -53,54 +53,62 @@ Before you begin, make sure you have:
 
 ## 🚀 Quick Start Guide
 
-Follow these steps to get A.D.A running on your system:
+Follow these steps to get A.D.A running on your system.
 
-### Step 1: Clone the Repository
+### Step 1: Install Miniconda
 
+1. Download from [miniconda.io](https://docs.anaconda.com/miniconda/)
+2. Run the installer (use default options)
+3. Open **Anaconda Prompt** (Windows) or your terminal (macOS/Linux)
+
+### Step 2: Install Ollama
+
+1. Download and install from [ollama.com/download](https://ollama.com/download)
+2. Run the installer (Ollama will start automatically as a background service)
+
+> ✅ **Ollama runs in the background** - no need to start it manually after installation.
+
+### Step 3: Download an AI Model
+
+Open a terminal and pull your preferred model. You can choose from:
+
+**🔹 Option A: Qwen3 (Recommended for most users)**
 ```bash
-git clone https://github.com/your-username/pocket_ai.git
-cd pocket_ai
-```
-
-### Step 2: Create a Virtual Environment (Recommended)
-
-Using a virtual environment keeps your project dependencies isolated:
-
-```bash
-# Create a virtual environment
-python -m venv venv
-
-# Activate it (Windows)
-venv\Scripts\activate
-
-# Activate it (macOS/Linux)
-source venv/bin/activate
-```
-
-### Step 3: Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-> ⏱️ **Note**: First installation may take 5-10 minutes as PyTorch and other large packages are downloaded.
-
-### Step 4: Install Ollama & Download Models
-
-1. Download and install Ollama from [ollama.com](https://ollama.com)
-2. Open a terminal and pull the required model:
-
-```bash
-# Pull the responder model (1.7B parameters, ~1.5GB)
+# Fast and efficient - great balance of speed and quality
 ollama pull qwen3:1.7b
 ```
 
-3. Verify Ollama is running:
+**🔹 Option B: DeepSeek R1 (Better reasoning)**
+```bash
+# Stronger reasoning capabilities - slightly slower
+ollama pull deepseek-r1:1.5b
+```
+
+> 💡 **Tip**: You can switch models anytime in `config.py` by changing `RESPONDER_MODEL`.
+
+Verify your model is installed:
 ```bash
 ollama list
 ```
 
-You should see `qwen3:1.7b` in the list.
+### Step 4: Clone & Set Up the Project
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/pocket_ai.git
+cd pocket_ai
+
+# Create a conda environment
+conda create -n ada python=3.11 -y
+
+# Activate the environment
+conda activate ada
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+> ⏱️ **Note**: First installation may take 5-10 minutes as PyTorch and other large packages are downloaded.
 
 ### Step 5: Run the Application
 
@@ -108,7 +116,21 @@ You should see `qwen3:1.7b` in the list.
 python main.py
 ```
 
-🎉 **That's it!** A.D.A should now launch with a beautiful GUI.
+🎉 **That's it!** A.D.A will launch with a beautiful GUI.
+
+---
+
+## 🤖 Automatic Model Downloads
+
+The following models are **downloaded automatically** on first run—no manual setup required:
+
+| Model | Purpose | Size | Downloaded From |
+|-------|---------|------|-----------------|
+| **Router Model** | Intent classification | ~500MB | [Hugging Face](https://huggingface.co/nlouis/pocket-ai-router) |
+| **TTS Voice** | Text-to-speech | ~50MB | [Piper Voices](https://huggingface.co/rhasspy/piper-voices) |
+| **STT Model** | Speech-to-text (Whisper) | ~150MB | OpenAI Whisper |
+
+> 📦 **First launch will take a few minutes** while these models download. Subsequent launches are instant.
 
 ---
 
@@ -155,16 +177,23 @@ All configuration is centralized in `config.py`:
 
 ### AI Models
 
+Change the chat model in `config.py`:
+
 ```python
 # The main chat model (runs on Ollama)
+# Options: "qwen3:1.7b" (fast) or "deepseek-r1:1.5b" (better reasoning)
 RESPONDER_MODEL = "qwen3:1.7b"
 
-# Ollama server URL
+# Ollama server URL (usually no need to change)
 OLLAMA_URL = "http://localhost:11434/api"
-
-# Path to the fine-tuned router model
-LOCAL_ROUTER_PATH = "./merged_model"
 ```
+
+**Model Comparison:**
+
+| Model | Speed | Reasoning | Best For |
+|-------|-------|-----------|----------|
+| `qwen3:1.7b` | ⚡ Fast | Good | Daily use, quick responses |
+| `deepseek-r1:1.5b` | Moderate | Excellent | Math, coding, complex questions |
 
 ### Text-to-Speech
 
