@@ -110,13 +110,54 @@ pip install -r requirements.txt
 
 > ⏱️ **Note**: First installation may take 5-10 minutes as PyTorch and other large packages are downloaded.
 
-### Step 5: Run the Application
+### Step 5: GPU Setup (NVIDIA Users)
+
+For **significantly faster** AI inference, install PyTorch with CUDA support:
+
+```bash
+# Install PyTorch with CUDA 12.4 support
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+```
+
+Verify CUDA is working:
+```bash
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+```
+
+> 💡 **CPU-only users**: Skip this step—PyTorch will use CPU by default. It's slower but works fine.
+
+### Step 6: Run the Application
 
 ```bash
 python main.py
 ```
 
 🎉 **That's it!** A.D.A will launch with a beautiful GUI.
+
+---
+
+## 🎮 GPU Acceleration
+
+A.D.A benefits greatly from GPU acceleration. Here's what runs on your GPU:
+
+| Component | GPU Benefit | Without GPU |
+|-----------|-------------|-------------|
+| **Router Model** | ~50ms inference | ~200ms inference |
+| **Ollama LLM** | Fast streaming responses | Slower, but functional |
+| **Whisper STT** | Real-time transcription | Slight delay |
+
+### CUDA Requirements
+
+- **NVIDIA GPU** with CUDA Compute Capability 5.0+ (GTX 900 series or newer)
+- **CUDA Toolkit**: Bundled with PyTorch—no separate install needed
+- **VRAM**: 4GB minimum, 6GB+ recommended
+
+### Check Your GPU
+
+```bash
+# View GPU info and VRAM
+nvidia-smi
+```
 
 ---
 
