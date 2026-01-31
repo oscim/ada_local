@@ -6,50 +6,67 @@
 #   pip install -r requirements.txt
 #
 # IMPORTANT: This project requires Python 3.10 or higher
+# IMPORTANT: For PyTorch with CUDA support, install from pytorch.org:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 # =====================================================
 
 # -----------------------------------------------------
 # Core GUI Framework
 # -----------------------------------------------------
-PySide6>=6.5.0                 # Qt GUI framework for Python
-PyQt-Fluent-Widgets>=1.0.0    # Fluent Design UI components for Windows 11 aesthetic
+PySide6>=6.10.0                # Qt GUI framework for Python
+PySide6-Fluent-Widgets>=1.10.0 # Fluent Design UI components (PySide6 version)
 darkdetect>=0.8.0              # Detect system dark/light mode
+markdown>=3.4.0                # Markdown rendering for chat messages
+pygments>=2.15.0               # Syntax highlighting for code blocks
 
 # -----------------------------------------------------
 # AI & Machine Learning
 # -----------------------------------------------------
-torch>=2.0.0                   # PyTorch for running AI models
-transformers>=4.35.0           # Hugging Face transformers for FunctionGemma router
-accelerate>=0.25.0             # Optimized model loading and inference
+# NOTE: Install PyTorch with CUDA separately from pytorch.org
+# torch>=2.6.0                 # PyTorch (install with CUDA from pytorch.org)
+transformers>=4.57.0           # Hugging Face transformers for router model
+accelerate>=1.12.0             # Optimized model loading and inference
+safetensors>=0.7.0             # Fast model weight loading
 
 # -----------------------------------------------------
 # Speech & Audio
 # -----------------------------------------------------
-piper-tts>=1.2.0               # Local text-to-speech engine
-sounddevice>=0.4.6             # Audio playback interface
-numpy>=1.24.0                  # Numerical computing (audio processing)
+piper-tts>=1.3.0               # Local text-to-speech engine
+sounddevice>=0.5.0             # Audio playback interface
+soundfile>=0.13.0              # Audio file I/O
+numpy>=2.0.0                   # Numerical computing (audio processing)
 realtimestt>=0.3.0             # Real-time speech-to-text with wake word detection
+PyAudio>=0.2.14                # Audio I/O for microphone access
+
+# -----------------------------------------------------
+# Browser Automation
+# -----------------------------------------------------
+playwright>=1.57.0             # Browser automation for web agent
+playwright-stealth>=2.0.0      # Stealth mode for browser automation
 
 # -----------------------------------------------------
 # Smart Home Control
 # -----------------------------------------------------
-python-kasa>=0.7.0             # TP-Link Kasa smart device control
+python-kasa>=0.10.0            # TP-Link Kasa smart device control
 
 # -----------------------------------------------------
 # Web & API Integrations
 # -----------------------------------------------------
-requests>=2.31.0               # HTTP requests for API calls
-duckduckgo-search>=4.0.0       # DuckDuckGo search for news and web search
+requests>=2.32.0               # HTTP requests for API calls
+ddgs>=9.0.0                    # DuckDuckGo search (replaces duckduckgo-search)
+httpx>=0.28.0                  # Async HTTP client
+
+# -----------------------------------------------------
+# System Utilities
+# -----------------------------------------------------
+psutil>=7.0.0                  # System and process monitoring
+pynvml>=13.0.0                 # NVIDIA GPU monitoring (VRAM display)
+huggingface-hub>=0.36.0        # Download models from Hugging Face
 
 # -----------------------------------------------------
 # Local Data Storage
 # -----------------------------------------------------
 # SQLite is included with Python - no additional packages needed
-
-# -----------------------------------------------------
-# Optional: GPU Monitoring (for demo.py VRAM display)
-# -----------------------------------------------------
-# pynvml>=11.5.0               # NVIDIA GPU monitoring - uncomment if needed
 
 # -----------------------------------------------------
 # Development (Optional)
