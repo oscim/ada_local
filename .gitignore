@@ -21,3 +21,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+data/chat_history.db
+
+skills/user_profile/SKILL.md

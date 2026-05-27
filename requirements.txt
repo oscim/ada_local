@@ -39,6 +39,8 @@ sounddevice>=0.5.0             # Audio playback interface
 soundfile>=0.13.0              # Audio file I/O
 numpy>=2.0.0                   # Numerical computing (audio processing)
 realtimestt>=0.3.0             # Real-time speech-to-text with wake word detection
+faster-whisper>=1.0.0          # Transcription engine for RealtimeSTT
+pvporcupine>=3.0.0             # Wake word detection (Porcupine) for RealtimeSTT
 PyAudio>=0.2.14                # Audio I/O for microphone access
 
 # -----------------------------------------------------

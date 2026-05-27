@@ -3,10 +3,9 @@ name: user_profile
 description: Profil de l'utilisateur — toujours injecté dans chaque conversation
 always: true
 ---
-
 ## Profil utilisateur
 
-**Prénom** : Jeff
+**Prénom** : OScim
 **Localisation** : France
 
 **Centres d'intérêt & expertises**

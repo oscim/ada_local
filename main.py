@@ -4,9 +4,16 @@ Pocket AI - Main Entry Point
 
 import os
 import faulthandler
+import multiprocessing
 
 # Print C stack trace on segfault — gives us the actual crash location
 faulthandler.enable()
+
+# RealtimeSTT spawns multiprocessing subprocesses for transcription.
+# On Linux the default start method is "fork", which copies Qt/CUDA/PyAudio
+# state into the child and causes a segfault in the main thread.
+# "spawn" starts a clean Python interpreter instead, avoiding the crash.
+multiprocessing.set_start_method("spawn", force=True)
 
 # Must be set BEFORE any tokenizers/HuggingFace/loky import to prevent
 # semaphore leaks and segfault at shutdown caused by loky process pool.
