@@ -46,6 +46,10 @@
           <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
           <span>Domotique</span>
         </li>
+        <li class="nav-item" data-view="cameras">
+          <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>
+          <span>Caméras</span>
+        </li>
         <li class="nav-item" data-view="page" data-page="cad" data-hint="Génère un modèle 3D en STL pour moi.">
           <svg viewBox="0 0 24 24"><path d="M7.75 2.75h-1.5c-.69 0-1.25.56-1.25 1.25v1.5C5 6.19 5.56 6.75 6.25 6.75h1.5c.69 0 1.25-.56 1.25-1.25v-1.5c0-.69-.56-1.25-1.25-1.25zm8.5 0h-1.5c-.69 0-1.25.56-1.25 1.25v1.5c0 .69.56 1.25 1.25 1.25h1.5c.69 0 1.25-.56 1.25-1.25v-1.5c0-.69-.56-1.25-1.25-1.25zM12 9l-7 4 7 4 7-4-7-4zm-7 6l7 4 7-4"/></svg>
           <span>Agent CAD</span>
@@ -91,7 +95,18 @@
         <svg viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
       </button>
       <div class="logo" title="ADA">A</div>
-      <h1 id="view-title">…</h1>
+      <h1 id="view-title" class="view-title-mobile">…</h1>
+      <div id="hw-bar" class="hw-bar-inline">
+        <span class="hw-block"><span class="hw-label">CPU</span><span id="hw-cpu">—</span></span>
+        <span class="hw-sep"></span>
+        <span class="hw-block"><span class="hw-label">RAM</span><span id="hw-ram">—</span></span>
+        <span class="hw-sep"></span>
+        <span class="hw-block"><span class="hw-label">GPU</span><span id="hw-gpu">—</span></span>
+        <span class="hw-sep"></span>
+        <span class="hw-block"><span class="hw-label">VRAM</span><span id="hw-vram">—</span></span>
+        <span class="hw-sep"></span>
+        <span class="hw-block hw-models"><span class="hw-label">Modèles</span><span id="hw-models">—</span></span>
+      </div>
       <div id="status-dot" title="Statut — cliquer pour le menu admin" role="button" tabindex="0"></div>
       <div id="admin-menu" class="admin-menu hidden">
         <div class="admin-menu-title">Administration</div>
@@ -100,7 +115,6 @@
       </div>
     </header>
 
-    <!-- Zone de montage des vues (modules ES) -->
     <div id="viewport"></div>
 
     <!-- Barre de saisie — activée par la vue Chat uniquement -->

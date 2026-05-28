@@ -2,8 +2,15 @@
 name: domotique
 description: Description de mon skill
 triggers:
-  - mot-clé 1
-  - mot-clé 2
+  - domotique
+  - lmiere
+  - sonde
+  - temperature
+  - chauffage
+  - chaudiere
+  - chaufferie
+  - camera
+  - cam
 ---
 ---
 name: ada-domotique

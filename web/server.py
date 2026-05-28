@@ -15,13 +15,22 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+import httpx
+import ssl as _ssl
+
+# Contexte SSL permissif pour caméras Reolink (vieux cipher suites TLS)
+_REOLINK_SSL = _ssl.create_default_context()
+_REOLINK_SSL.set_ciphers("DEFAULT:@SECLEVEL=0")
+_REOLINK_SSL.check_hostname = False
+_REOLINK_SSL.verify_mode = _ssl.CERT_NONE
 
 from core.memory_store import memory_store
 from core.runtime_state import runtime_state
 from core.skill_manager import skill_manager
+from core.settings_store import settings
 from web.pipeline import process_message
 
 # ---------------------------------------------------------------------------
@@ -79,7 +88,11 @@ async def chat(req: ChatRequest):
     async def _sse():
         try:
             async for chunk in process_message(req.message, req.history):
-                yield f"data: {json.dumps({'text': chunk})}\n\n"
+                if chunk.startswith('\x00img\x00'):
+                    img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
+                    yield f"data: {json.dumps({'img_url': img_url})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'text': chunk})}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
@@ -368,7 +381,7 @@ async def page_memory(limit: int = 30):
 
 @app.get("/api/page/skills")
 async def page_skills():
-    """Liste des skills chargées pour la page Compétences desktop."""
+    """Liste des skills chargées pour la page Compétences web."""
     skills = []
     for s in skill_manager.skills:
         skills.append(
@@ -377,9 +390,201 @@ async def page_skills():
                 "description": s.description,
                 "triggers": s.triggers,
                 "always": bool(s.always),
+                "body": s.body,
             }
         )
     return {"count": len(skills), "skills": skills}
+
+
+# ---------------------------------------------------------------------------
+# Caméras — proxy Reolink via config Domoticz
+# ---------------------------------------------------------------------------
+
+from fastapi import HTTPException  # noqa: E402
+
+
+async def _fetch_domoticz_cameras() -> list[dict]:
+    """Récupère la liste des caméras depuis Domoticz."""
+    domo_url = settings.get("domoticz.url", "").rstrip("/")
+    if not domo_url:
+        return []
+    async with httpx.AsyncClient(timeout=5) as client:
+        r = await client.get(f"{domo_url}/json.htm?type=cameras")
+        data = r.json()
+    return data.get("result", [])
+
+
+@app.get("/api/cameras")
+async def list_cameras():
+    """Liste des caméras configurées dans Domoticz (sans mots de passe)."""
+    try:
+        cams = await _fetch_domoticz_cameras()
+        return {
+            "cameras": [
+                {"idx": c["idx"], "name": c["Name"], "enabled": c.get("Enabled") == "true"}
+                for c in cams
+            ]
+        }
+    except Exception as exc:
+        return {"cameras": [], "error": str(exc)}
+
+
+@app.get("/api/cameras/{idx}/snapshot")
+async def camera_snapshot(idx: str):
+    """Proxy JPEG du snapshot Reolink pour la caméra Domoticz {idx}."""
+    try:
+        cams = await _fetch_domoticz_cameras()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Domoticz inaccessible : {exc}")
+    cam = next((c for c in cams if str(c.get("idx")) == str(idx)), None)
+    if not cam:
+        raise HTTPException(status_code=404, detail=f"Caméra {idx} introuvable.")
+    protocol = "https" if cam.get("Protocol", 0) == 1 else "http"
+    snap_url = f"{protocol}://{cam['Address']}:{cam['Port']}/{cam['ImageURL']}"
+    try:
+        async with httpx.AsyncClient(timeout=10, verify=_REOLINK_SSL) as client:
+            snap = await client.get(snap_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Caméra injoignable : {exc}")
+    if snap.status_code != 200:
+        raise HTTPException(status_code=502, detail="Snapshot indisponible.")
+    return Response(
+        content=snap.content,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, no-cache"},
+    )
+
+
+class CameraAnalyzeRequest(BaseModel):
+    question: str = "Décris ce que tu vois. Compte les véhicules et personnes visibles."
+
+
+@app.post("/api/cameras/{idx}/analyze")
+async def camera_analyze(idx: str, req: CameraAnalyzeRequest):
+    """Analyse le snapshot de la caméra via gemma4 (vision LLM). SSE stream."""
+    import base64
+    from config import OLLAMA_URL
+
+    # 1. Récupérer la config caméra
+    try:
+        cams = await _fetch_domoticz_cameras()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Domoticz inaccessible : {exc}")
+    cam = next((c for c in cams if str(c.get("idx")) == str(idx)), None)
+    if not cam:
+        raise HTTPException(status_code=404, detail=f"Caméra {idx} introuvable.")
+
+    # 2. Snapshot
+    protocol = "https" if cam.get("Protocol", 0) == 1 else "http"
+    snap_url = f"{protocol}://{cam['Address']}:{cam['Port']}/{cam['ImageURL']}"
+    try:
+        async with httpx.AsyncClient(timeout=12, verify=_REOLINK_SSL) as client:
+            snap = await client.get(snap_url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Caméra injoignable : {exc}")
+    if snap.status_code != 200:
+        raise HTTPException(status_code=502, detail="Snapshot indisponible.")
+    img_b64 = base64.b64encode(snap.content).decode()
+
+    # 3. Stream gemma4 vision
+    vision_model = settings.get("models.vision", "gemma4:latest") or "gemma4:latest"
+    payload = {
+        "model": vision_model,
+        "messages": [{
+            "role": "user",
+            "content": req.question + " Réponds en français, sois précis et concis.",
+            "images": [img_b64],
+        }],
+        "stream": True,
+    }
+
+    async def _gen():
+        try:
+            async with httpx.AsyncClient(timeout=180) as client:
+                async with client.stream("POST", f"{OLLAMA_URL}/chat", json=payload) as resp:
+                    async for line in resp.aiter_lines():
+                        if not line:
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            token = chunk.get("message", {}).get("content", "")
+                            if token:
+                                yield f"data: {json.dumps({'token': token})}\n\n"
+                            if chunk.get("done"):
+                                yield "data: [DONE]\n\n"
+                                return
+                        except Exception:
+                            continue
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ---------------------------------------------------------------------------
+# Skills CRUD
+# ---------------------------------------------------------------------------
+
+
+def _build_skill_content(name: str, description: str, triggers: list, body: str, always: bool = False) -> str:
+    trigger_lines = "\n".join(f"  - {t}" for t in triggers) if triggers else "  []"
+    always_line = "\nalways: true" if always else ""
+    return (
+        f"---\nname: {name}\ndescription: {description}\ntriggers:\n{trigger_lines}"
+        f"{always_line}\n---\n{body}\n"
+    )
+
+
+class SkillPayload(BaseModel):
+    description: str = ""
+    triggers: list = []
+    body: str = ""
+
+
+class SkillCreatePayload(SkillPayload):
+    name: str
+
+
+@app.put("/api/skills/{name}")
+async def update_skill(name: str, req: SkillPayload):
+    """Met à jour description, triggers et body d'une skill existante."""
+    skill = skill_manager.get(name)
+    if not skill:
+        raise HTTPException(status_code=404, detail=f"Skill '{name}' introuvable.")
+    content = _build_skill_content(
+        name=skill.name,
+        description=req.description,
+        triggers=req.triggers,
+        body=req.body,
+        always=skill.always,
+    )
+    skill.path.write_text(content, encoding="utf-8")
+    skill_manager.reload()
+    return {"ok": True}
+
+
+@app.post("/api/skills")
+async def create_skill(req: SkillCreatePayload):
+    """Crée une nouvelle skill (dossier + SKILL.md)."""
+    name = req.name.strip().lower().replace(" ", "_")
+    if not name:
+        raise HTTPException(status_code=400, detail="Nom invalide.")
+    skills_dir = Path(__file__).resolve().parent.parent / "skills" / name
+    if skills_dir.exists():
+        raise HTTPException(status_code=409, detail=f"Skill '{name}' existe déjà.")
+    skills_dir.mkdir(parents=True)
+    skill_path = skills_dir / "SKILL.md"
+    content = _build_skill_content(
+        name=name,
+        description=req.description,
+        triggers=req.triggers,
+        body=req.body,
+    )
+    skill_path.write_text(content, encoding="utf-8")
+    skill_manager.reload()
+    return {"ok": True, "name": name}
 
 
 # ---------------------------------------------------------------------------

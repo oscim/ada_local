@@ -319,7 +319,6 @@ header h1 { font-size: 1rem; font-weight: 700; letter-spacing: .04em; flex: 1; }
     backdrop-filter: blur(8px);
   }
   .logo { width: 30px; height: 30px; border-radius: 7px; font-size: 14px; }
-  header h1 { font-size: .98rem; letter-spacing: .02em; color: #d8e4f6; }
 
   #viewport   { grid-column: 2; grid-row: 2; }
   #input-bar  { grid-column: 2; grid-row: 3;
@@ -332,6 +331,48 @@ header h1 { font-size: 1rem; font-weight: 700; letter-spacing: .04em; flex: 1; }
   .icon-btn, #tts-btn { border-radius: 10px; }
 
   #toast { bottom: 20px; background: rgba(10,14,21,.92); border-color: rgba(23,215,238,.4); }
+}
+
+/* ── Stats matérielles inline dans le header (PC) ──────────── */
+.hw-bar-inline { display: none; }
+.view-title-mobile { font-size: 1rem; font-weight: 700; flex: 1; }
+
+@media (min-width: 1100px) {
+  .view-title-mobile { display: none; }
+  .hw-bar-inline {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    font-size: .72rem;
+    font-family: 'JetBrains Mono', 'Fira Mono', monospace;
+    color: #7eb8d4;
+    user-select: none;
+  }
+  .hw-block {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding-right: 0;
+    white-space: nowrap;
+  }
+  .hw-label {
+    color: rgba(255,255,255,.35);
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    font-size: .65rem;
+  }
+  .hw-block span:last-child { color: #9de8b0; font-weight: 600; }
+  .hw-models { flex: 1; min-width: 0; }
+  .hw-models span:last-child { color: #c5a8f5; overflow: hidden; text-overflow: ellipsis; max-width: 220px; display: inline-block; }
+  .hw-sep {
+    width: 1px; height: 12px;
+    background: rgba(255,255,255,.1);
+    margin: 0 12px;
+    flex-shrink: 0;
+  }
 }
 
 /* ── Menu admin ─────────────────────────────────────────────── */

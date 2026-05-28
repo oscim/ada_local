@@ -85,8 +85,7 @@ export async function sendMessage(text) {
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
     _typing.classList.remove('show');
-    ada = _bubble('ada', '');
-    ada.classList.add('streaming');
+    // ada bubble créée au premier token texte (peut être précédée d'une image)
 
     const reader  = resp.body.getReader();
     const decoder = new TextDecoder();
@@ -105,7 +104,22 @@ export async function sendMessage(text) {
         try {
           const obj = JSON.parse(raw);
           if (obj.error) { showToast('Erreur : ' + obj.error); break; }
-          if (obj.text) { acc += obj.text; ada.textContent = acc; _messages.scrollTop = _messages.scrollHeight; }
+          if (obj.img_url) {
+            // Afficher la capture caméra dans une bulle dédiée
+            const imgBubble = document.createElement('div');
+            imgBubble.className = 'msg ada msg-snap';
+            const img = document.createElement('img');
+            img.src = obj.img_url + '?t=' + Date.now();
+            img.alt = 'Capture caméra';
+            img.style.cssText = 'max-width:100%;max-height:260px;border-radius:10px;display:block;';
+            imgBubble.appendChild(img);
+            _messages.appendChild(imgBubble);
+            _messages.scrollTop = _messages.scrollHeight;
+          }
+          if (obj.text) {
+            if (!ada) { ada = _bubble('ada', ''); ada.classList.add('streaming'); }
+            acc += obj.text; ada.textContent = acc; _messages.scrollTop = _messages.scrollHeight;
+          }
         } catch { /* ignore */ }
       }
     }

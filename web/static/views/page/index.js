@@ -184,20 +184,147 @@ function _renderHome(data, el) {
 }
 
 function _renderSkills(data, el) {
-  const items = (data.skills || []).slice(0, 20).map((s) => {
-    const desc     = escapeHtml(s.description || '');
-    const triggers = (s.triggers || []).slice(0, 5).map(escapeHtml).join(' · ');
-    const always   = s.always ? ' (always-on)' : '';
-    return `<li><b>${escapeHtml(s.name)}${always}</b>${desc ? ` — ${desc}` : ''}${triggers ? `<br><span class="page-muted">Triggers: ${triggers}</span>` : ''}</li>`;
-  }).join('');
+  const skills = data.skills || [];
+  let currentIdx = 0;
+
+  // Build list HTML
+  function buildCardsHtml() {
+    if (!skills.length) return '<p class="page-muted">Aucune compétence.</p>';
+    return skills.map((s, i) => {
+      const badge = s.always ? '<span class="sk-always-badge">always-on</span>' : '';
+      return `<button class="sk-card${i === currentIdx ? ' sk-card--active' : ''}" data-idx="${i}" type="button">
+        <div class="sk-card-row"><span class="sk-card-name">${escapeHtml(s.name)}</span>${badge}</div>
+        ${s.description ? `<span class="sk-card-desc">${escapeHtml(s.description)}</span>` : ''}
+      </button>`;
+    }).join('');
+  }
 
   el.innerHTML = `
-    <section class="page-panel"><h3>Compétences chargées</h3>
-      <div class="page-status-row"><span>Total</span><b>${data.count || 0}</b></div>
-    </section>
-    <section class="page-panel"><h3>Liste</h3>
-      ${items ? `<ul class="page-list">${items}</ul>` : '<p class="page-muted">Aucune skill disponible.</p>'}
-    </section>`;
+    <div class="skills-wrap">
+      <aside class="skills-list">
+        <div class="sk-list-header">
+          <span class="sk-count">${skills.length} compétence${skills.length > 1 ? 's' : ''}</span>
+          <button class="sk-btn sk-btn-add" id="sk-add-btn" title="Nouvelle compétence" type="button">+ Ajouter</button>
+        </div>
+        <div id="sk-cards">${buildCardsHtml()}</div>
+      </aside>
+      <div class="skills-detail" id="skills-detail"></div>
+    </div>`;
+
+  // ── Detail (read) ───────────────────────────────────────────────────────
+  function showDetail(i) {
+    currentIdx = i;
+    // Update active card
+    el.querySelectorAll('.sk-card').forEach((b, idx) =>
+      b.classList.toggle('sk-card--active', idx === i));
+    const s = skills[i];
+    const detailEl = el.querySelector('#skills-detail');
+    const badge = s.always ? '<span class="sk-always-badge">always-on</span>' : '';
+    const triggersHtml = (s.triggers || []).length
+      ? s.triggers.map(t => `<span class="sk-trigger">${escapeHtml(t)}</span>`).join('')
+      : '<span class="page-muted">—</span>';
+    const bodyHtml = s.body
+      ? `<pre class="sk-body">${escapeHtml(s.body)}</pre>`
+      : '<p class="page-muted">Aucun contenu.</p>';
+    detailEl.innerHTML = `
+      <div class="sk-detail-header">
+        <h2 class="sk-detail-name">${escapeHtml(s.name)}</h2>${badge}
+        <button class="sk-btn sk-btn-edit" data-name="${escapeHtml(s.name)}" type="button">Modifier</button>
+      </div>
+      ${s.description ? `<p class="sk-detail-desc">${escapeHtml(s.description)}</p>` : ''}
+      <div class="sk-detail-section">
+        <span class="sk-section-label">Déclencheurs</span>
+        <div class="sk-triggers-wrap">${triggersHtml}</div>
+      </div>
+      <div class="sk-detail-section">
+        <span class="sk-section-label">Instructions injectées</span>
+        ${bodyHtml}
+      </div>`;
+    detailEl.querySelector('.sk-btn-edit').addEventListener('click', () => showForm(s));
+  }
+
+  // ── Form (edit / create) ────────────────────────────────────────────────
+  function showForm(skill) {
+    const isNew = !skill;
+    const s = skill || { name: '', description: '', triggers: [], body: '', always: false };
+    const detailEl = el.querySelector('#skills-detail');
+    detailEl.innerHTML = `
+      <div class="sk-form">
+        <div class="sk-form-title">${isNew ? 'Nouvelle compétence' : `Modifier — ${escapeHtml(s.name)}`}</div>
+        ${isNew ? `
+          <label class="sk-field-label">Nom (identifiant unique)</label>
+          <input class="sk-field-input" id="sk-f-name" type="text" placeholder="ma_competence" value="" />
+        ` : ''}
+        <label class="sk-field-label">Description</label>
+        <input class="sk-field-input" id="sk-f-desc" type="text" placeholder="Description courte" value="${escapeHtml(s.description || '')}" />
+        <label class="sk-field-label">Déclencheurs (séparés par des virgules)</label>
+        <input class="sk-field-input" id="sk-f-triggers" type="text" placeholder="recette, cuisine, ingrédient" value="${escapeHtml((s.triggers || []).join(', '))}" />
+        <label class="sk-field-label">Instructions injectées</label>
+        <textarea class="sk-field-textarea" id="sk-f-body" rows="10" placeholder="Tu es un expert en...">${escapeHtml(s.body || '')}</textarea>
+        <div class="sk-form-actions">
+          <button class="sk-btn sk-btn-cancel" id="sk-f-cancel" type="button">Annuler</button>
+          <button class="sk-btn sk-btn-save" id="sk-f-save" type="button">${isNew ? 'Créer' : 'Sauvegarder'}</button>
+        </div>
+        <p class="sk-form-error hidden" id="sk-f-error"></p>
+      </div>`;
+
+    detailEl.querySelector('#sk-f-cancel').addEventListener('click', () => {
+      if (!isNew) showDetail(currentIdx);
+      else if (skills.length) showDetail(0);
+      else detailEl.innerHTML = '';
+    });
+
+    detailEl.querySelector('#sk-f-save').addEventListener('click', async () => {
+      const saveBtn = detailEl.querySelector('#sk-f-save');
+      const errEl   = detailEl.querySelector('#sk-f-error');
+      const name    = isNew ? detailEl.querySelector('#sk-f-name').value.trim() : s.name;
+      const desc    = detailEl.querySelector('#sk-f-desc').value.trim();
+      const triggers = detailEl.querySelector('#sk-f-triggers').value
+        .split(',').map(t => t.trim()).filter(Boolean);
+      const body = detailEl.querySelector('#sk-f-body').value;
+
+      if (!name) { errEl.textContent = 'Le nom est requis.'; errEl.classList.remove('hidden'); return; }
+      saveBtn.disabled = true; saveBtn.textContent = '…';
+      try {
+        const url  = isNew ? '/api/skills' : `/api/skills/${encodeURIComponent(name)}`;
+        const method = isNew ? 'POST' : 'PUT';
+        const resp = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description: desc, triggers, body }),
+        });
+        if (!resp.ok) {
+          const e = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error(e.detail || 'Erreur serveur');
+        }
+        // Reload skills list
+        const fresh = await fetchJSON('/api/page/skills');
+        _renderSkills(fresh, el);
+        // Select the skill we just saved
+        const newIdx = (fresh.skills || []).findIndex(x => x.name === name);
+        if (newIdx >= 0) {
+          // showDetail is bound inside the new _renderSkills call but we need a tiny delay
+          setTimeout(() => el.querySelectorAll('.sk-card')[newIdx]?.click(), 50);
+        }
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.classList.remove('hidden');
+        saveBtn.disabled = false;
+        saveBtn.textContent = isNew ? 'Créer' : 'Sauvegarder';
+      }
+    });
+  }
+
+  // ── Wire clicks ─────────────────────────────────────────────────────────
+  el.querySelector('#sk-cards').addEventListener('click', e => {
+    const btn = e.target.closest('.sk-card');
+    if (btn) showDetail(Number(btn.dataset.idx));
+  });
+  el.querySelector('#sk-add-btn').addEventListener('click', () => showForm(null));
+
+  // Show first skill (or empty state)
+  if (skills.length) showDetail(0);
+  else showForm(null);
 }
 
 async function _loadData(pageKey, el) {

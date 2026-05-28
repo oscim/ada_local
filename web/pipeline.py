@@ -64,6 +64,225 @@ _INFRA_TRIGGERS = frozenset(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Regex de commande de contrôle domotique
+_CONTROL_RE = re.compile(
+    r"^(?P<action>allume|allumer|éteins|éteint|eteins|eteint|éteindre|eteindre"
+    r"|ouvre|ouvrir|ferme|fermer|active|activer|désactive|desactive|désactiver|desactiver"
+    r"|toggle|bascule)\s+(?P<name>.+)$",
+    re.IGNORECASE,
+)
+
+# Regex de demande d'analyse caméra
+# Ex : "analyse dep-parking", "caméra parking combien de voiture", "regarde la cam parking"
+_CAMERA_RE = re.compile(
+    r"(?:analyse[rz]?|analys[ie]|regarde[rz]?|scan[ne]*|capture|visionne[rz]?|montre|affiche|inspect)"
+    r".*?(?:cam(?:éra)?|caméra|camera|parking|dep[-_\s]parking)\s*(?P<name1>[a-z0-9_\-]+)?"
+    r"|(?:cam(?:éra)?|caméra|camera)\s+(?P<name2>[a-z0-9_\-]+)"
+    r"|(?P<name3>[a-z0-9_\-]+(?:parking|cam)[a-z0-9_\-]*)",
+    re.IGNORECASE,
+)
+_ACTION_TO_ON: dict[str, bool | None] = {
+    "allume": True,  "allumer": True,
+    "ouvre": True,   "ouvrir": True,
+    "active": True,  "activer": True,
+    "éteins": False, "éteint": False, "eteins": False, "eteint": False,
+    "éteindre": False, "eteindre": False,
+    "ferme": False,  "fermer": False,
+    "désactive": False, "desactive": False, "désactiver": False, "desactiver": False,
+    "toggle": None,  "bascule": None,
+}
+
+
+def _find_entity_by_name(name_query: str):
+    """Cherche une entité dont le nom correspond à la requête (insensible à la casse, substring)."""
+    try:
+        from core.unified_entities import unified_entity_service
+        entities = unified_entity_service.get_unified_entities(force_refresh=False)
+        if not entities:
+            return None
+        q = name_query.strip().lower()
+        # 1. Correspondance exacte
+        for e in entities:
+            if e.name.lower() == q:
+                return e
+        # 2. Correspondance partielle
+        candidates = [e for e in entities if q in e.name.lower() or e.name.lower() in q]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            # Préférer la correspondance la plus courte (plus précise)
+            return min(candidates, key=lambda e: len(e.name))
+        # 3. Correspondance par mots communs
+        words = set(q.split())
+        scored = [(sum(1 for w in words if w in e.name.lower()), e) for e in entities]
+        scored = [(s, e) for s, e in scored if s > 0]
+        if scored:
+            return max(scored, key=lambda x: x[0])[1]
+    except Exception:
+        pass
+    return None
+
+
+async def _find_camera_by_hint(hint: str) -> dict | None:
+    """Cherche une caméra Domoticz dont le nom correspond au hint."""
+    from core.settings_store import settings as app_settings
+    domo_url = app_settings.get("domoticz.url", "").rstrip("/")
+    if not domo_url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{domo_url}/json.htm?type=cameras")
+            cams = r.json().get("result", [])
+    except Exception:
+        return None
+    if not cams:
+        return None
+    hint_l = hint.strip().lower().replace("-", "").replace("_", "").replace(" ", "")
+    # Correspondance exacte
+    for c in cams:
+        if c["Name"].lower().replace("-", "").replace("_", "") == hint_l:
+            return c
+    # Substring : préférer le nom de caméra le plus long (évite "parking" de matcher avant "dep-parking")
+    matches = []
+    for c in cams:
+        n = c["Name"].lower().replace("-", "").replace("_", "")
+        if hint_l in n or n in hint_l:
+            matches.append((len(n), c))
+    if matches:
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return matches[0][1]
+    # Si un seul candidat, le retourner
+    if len(cams) == 1:
+        return cams[0]
+    return None
+
+
+async def _find_camera_in_text(text: str) -> dict | None:
+    """Trouve la caméra dont le nom (normalisé) apparaît dans le texte.
+    En cas d'ambiguïté, retourne la caméra avec le nom le plus long (plus spécifique).
+    Ex : "montre dep-parking" → dep-parking gagne sur parking."""
+    from core.settings_store import settings as app_settings
+    domo_url = app_settings.get("domoticz.url", "").rstrip("/")
+    if not domo_url:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{domo_url}/json.htm?type=cameras")
+            cams = r.json().get("result", [])
+    except Exception:
+        return None
+    if not cams:
+        return None
+    text_n = text.lower().replace("-", "").replace("_", "").replace(" ", "")
+    matches = []
+    for c in cams:
+        n = c["Name"].lower().replace("-", "").replace("_", "")
+        if n and n in text_n:
+            matches.append((len(n), c))
+    if matches:
+        matches.sort(key=lambda x: x[0], reverse=True)
+        return matches[0][1]
+    # Fallback : une seule caméra disponible
+    if len(cams) == 1:
+        return cams[0]
+    return None
+
+
+# Mots indiquant qu'on veut juste voir l'image (pas analyser)
+_SHOW_ONLY_WORDS = ("montre", "affiche", "voit", "voir", "montre-moi", "capture")
+# Mots indiquant une vraie demande d'analyse
+_ANALYZE_WORDS   = ("analyse", "analyser", "décris", "decris", "compte",
+                    "combien", "qu'est", "que vois", "scan", "inspecte",
+                    "regarde", "regarder")
+
+
+async def _analyze_camera_stream(cam: dict, question: str, show_only: bool = False):
+    """Fetch snapshot + gemma4 vision, yield text tokens.
+    Émet d'abord un marqueur d'image \x00img\x00<url> pour l'affichage dans le chat.
+    Si show_only=True, ne lance pas le LLM vision.
+    """
+    import base64
+    import ssl as _ssl_mod
+    from config import OLLAMA_URL as _OLLAMA_URL
+    from core.settings_store import settings as app_settings
+
+    ctx = _ssl_mod.create_default_context()
+    ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+    ctx.check_hostname = False
+    ctx.verify_mode = _ssl_mod.CERT_NONE
+
+    protocol = "https" if cam.get("Protocol", 0) == 1 else "http"
+    snap_url = f"{protocol}://{cam['Address']}:{cam['Port']}/{cam['ImageURL']}"
+    try:
+        async with httpx.AsyncClient(timeout=12, verify=ctx) as client:
+            snap = await client.get(snap_url)
+    except Exception as exc:
+        yield f"❌ Impossible d'accéder à la caméra **{cam['Name']}** : {exc}"
+        return
+    if snap.status_code != 200:
+        yield f"❌ Snapshot indisponible (HTTP {snap.status_code})."
+        return
+
+    # Émettre l'image directement dans le chat
+    yield f"\x00img\x00/api/cameras/{cam['idx']}/snapshot"
+
+    if show_only:
+        yield f"📷 **{cam['Name']}**"
+        return
+
+    img_b64 = base64.b64encode(snap.content).decode()
+    vision_model = app_settings.get("models.vision", "gemma4:latest") or "gemma4:latest"
+    base_ollama = _OLLAMA_URL.rstrip("/")
+    if base_ollama.endswith("/api"):
+        base_ollama = base_ollama[:-4]
+    payload = {
+        "model": vision_model,
+        "messages": [{
+            "role": "user",
+            "content": question + " Réponds en français, sois précis et concis.",
+            "images": [img_b64],
+        }],
+        "stream": True,
+    }
+    yield f"📷 Analyse de **{cam['Name']}** en cours…\n\n"
+    async with httpx.AsyncClient(timeout=180) as client:
+        async with client.stream("POST", f"{base_ollama}/api/chat", json=payload) as resp:
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    chunk = json.loads(line)
+                    token = chunk.get("message", {}).get("content", "")
+                    if token:
+                        yield token
+                    if chunk.get("done"):
+                        return
+                except Exception:
+                    continue
+
+
+# Mots-clés qui signalent une demande d'analyse caméra
+_CAMERA_TRIGGERS = (
+    "analyse", "analyser", "regarde", "regarder", "scan", "scanner",
+    "capture", "inspecte", "inspecter", "montre la cam", "affiche la cam",
+    "caméra", "camera", "cam ", "cam-", "webcam",
+    "parking",
+)
+
+_DOMOTIQUE_TRIGGERS = (
+    "lumière", "lumières", "lumiere", "lumieres",
+    "switch", "switches", "prise", "prises",
+    "capteur", "capteurs", "sensor", "sensors",
+    "domotique", "domoticz", "home assistant", "kasa",
+    "allumé", "éteint", "allumée", "étein",
+    "appareil connecté", "appareils connectés", "équipement connecté",
+    "état de mes", "etat de mes", "état des", "etat des",
+    "quelles lumières", "quels appareils", "quels capteurs",
+    "température", "temperature", "humidité", "humidity",
+    "volet", "volets", "portail", "thermostat",
+)
+
 
 # ---------------------------------------------------------------------------
 # Agent web Playwright (pipeline version — sans SSE, yield chunks)
@@ -212,6 +431,46 @@ def _system_prompt() -> str:
         f"{lang_instr} "
         "Tu es accessible via l'interface web mobile — sois utile, précise et naturelle."
     )
+
+
+def _format_entities_context() -> str:
+    """Retourne un résumé textuel des entités domotiques pour le contexte LLM."""
+    try:
+        from core.unified_entities import unified_entity_service
+        entities = unified_entity_service.get_unified_entities(force_refresh=False)
+        if not entities:
+            return ""
+
+        TYPE_FR = {
+            "light": "Lumière", "switch": "Switch", "media_player": "Lecteur",
+            "sensor": "Capteur", "binary_sensor": "Capteur binaire",
+            "camera": "Caméra", "unknown": "Autre",
+        }
+        lines = [f"[Entités domotiques — {len(entities)} au total]"]
+        by_type: dict = {}
+        for e in entities:
+            t = e.type or "unknown"
+            by_type.setdefault(t, []).append(e)
+
+        for t, group in sorted(by_type.items()):
+            label = TYPE_FR.get(t, t)
+            lines.append(f"\n{label}s ({len(group)}) :")
+            for e in group[:40]:  # max 40 par type pour ne pas exploser le contexte
+                state_str = e.state or "?"
+                extras = []
+                if e.attributes:
+                    if e.attributes.get("brightness") is not None:
+                        extras.append(f"{round(e.attributes['brightness'] / 2.55)}%")
+                    if e.attributes.get("temperature") is not None:
+                        extras.append(f"{e.attributes['temperature']}°C")
+                    if e.attributes.get("humidity") is not None:
+                        extras.append(f"{e.attributes['humidity']}%")
+                zone = f" [{e.zone}]" if e.zone and e.zone != "Other" else ""
+                extra_str = f" ({', '.join(extras)})" if extras else ""
+                lines.append(f"  - {e.name}{zone} : {state_str}{extra_str}")
+        return "\n".join(lines)
+    except Exception as ex:
+        return f"[Entités domotiques non disponibles : {ex}]"
 
 
 # ---------------------------------------------------------------------------
@@ -374,9 +633,75 @@ async def process_message(
         yield infra
         return
 
+    # Analyse caméra : "analyse dep-parking", "caméra parking combien de voitures ?"
+    if any(t in text_lower for t in _CAMERA_TRIGGERS):
+        # Chercher directement le nom de la caméra dans le texte (match le plus long gagne)
+        cam = await _find_camera_in_text(text_lower)
+        # Fallback si pas trouvé via le texte : essayer via regex
+        if cam is None:
+            m_cam = _CAMERA_RE.search(text_lower)
+            cam_hint = (
+                (m_cam.group("name1") or m_cam.group("name2") or m_cam.group("name3") or "").strip()
+                if m_cam else ""
+            )
+            if cam_hint:
+                cam = await _find_camera_by_hint(cam_hint)
+        if cam is None:
+            cam = await _find_camera_by_hint("")
+        if cam is not None:
+            # Détecter si c'est juste "montre" ou une vraie analyse
+            _show_only = (
+                any(t in text_lower for t in _SHOW_ONLY_WORDS)
+                and not any(t in text_lower for t in _ANALYZE_WORDS)
+            )
+            # La question pour le LLM vision = tout le message original
+            full_answer = ""
+            async for chunk in _analyze_camera_stream(cam, user_text, show_only=_show_only):
+                full_answer += chunk
+                yield chunk
+            memory_store.save(session_id, "user", user_text)
+            memory_store.save(session_id, "assistant", full_answer)
+            return
+
+    # Commandes de contrôle domotique : "allume X", "éteins X", "ouvre X"…
+    m_ctrl = _CONTROL_RE.match(user_text.strip())
+    if m_ctrl:
+        action_word = m_ctrl.group("action").lower()
+        entity_name = m_ctrl.group("name").strip()
+        target_on = _ACTION_TO_ON.get(action_word)  # True / False / None
+
+        entity = _find_entity_by_name(entity_name)
+        if entity is None:
+            response = f"❓ Aucune entité trouvée pour « {entity_name} ». Vérifiez le nom sur la page Domotique."
+        elif entity.read_only:
+            response = f"⚠️ **{entity.name}** est en lecture seule (capteur), impossible de le contrôler."
+        else:
+            from core.unified_entities import unified_entity_service
+            ok = unified_entity_service.toggle_entity(entity.id, on=target_on)
+            if ok:
+                new_state = "on" if target_on is True else ("off" if target_on is False else ("off" if entity.state == "on" else "on"))
+                verb = "allumé" if new_state == "on" else "éteint"
+                response = f"✅ **{entity.name}** {verb}."
+            else:
+                response = f"❌ Impossible de contrôler **{entity.name}**. Vérifiez la connexion au provider ({entity.provider})."
+
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", response)
+        yield response
+        return
+
     # Contexte conversationnel de base
     messages: list[dict] = [{"role": "system", "content": _system_prompt()}]
     messages.extend(history[-20:])
+
+    # Injection du contexte domotique si la question concerne les entités
+    if any(t in text_lower for t in _DOMOTIQUE_TRIGGERS):
+        entity_ctx = _format_entities_context()
+        if entity_ctx:
+            messages[0] = {
+                "role": "system",
+                "content": messages[0]["content"] + "\n\n" + entity_ctx,
+            }
 
     # Injection des skills + mémoire long terme, comme l'app
     messages = skill_manager.inject(messages, user_text)

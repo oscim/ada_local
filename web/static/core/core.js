@@ -11,6 +11,7 @@ const VIEW_LOADERS = {
   memory:    () => import('/static/views/memory/index.js'),
   page:      () => import('/static/views/page/index.js'),
   webagent:  () => import('/static/views/webagent/index.js'),
+  cameras:   () => import('/static/views/cameras/index.js'),
 };
 
 const VIEW_TITLES = {
@@ -18,6 +19,7 @@ const VIEW_TITLES = {
   chat:      'Discussion',
   memory:    'Mémoire',
   webagent:  'Agent Web',
+  cameras:   'Caméras',
 };
 
 // ── État global ─────────────────────────────────────────────────
@@ -114,15 +116,56 @@ sidebar.addEventListener('touchend',   (e) => {
   if (e.changedTouches[0].clientX - _touchStartX < -60) closeSidebar();
 }, { passive: true });
 
-// ── Statut Ollama ───────────────────────────────────────────────
+// ── Statut Ollama + barre hw ────────────────────────────────────
+const _hwBar = {
+  cpu:    document.getElementById('hw-cpu'),
+  ram:    document.getElementById('hw-ram'),
+  gpu:    document.getElementById('hw-gpu'),
+  vram:   document.getElementById('hw-vram'),
+  models: document.getElementById('hw-models'),
+};
+
+function _colorStat(el, pct) {
+  if (!el) return;
+  el.style.color = pct > 85 ? '#ff6b6b' : pct > 60 ? '#ffd166' : '#9de8b0';
+}
+
 async function _checkStatus() {
   try {
     const d = await (await fetch('/api/status')).json();
     statusDot.className = d.ollama === 'online' ? 'online' : 'offline';
   } catch { statusDot.className = 'offline'; }
 }
+
+async function _updateHwBar() {
+  try {
+    const d = await (await fetch('/api/dashboard')).json();
+    if (_hwBar.cpu) {
+      _hwBar.cpu.textContent = `${d.cpu_pct}%`;
+      _colorStat(_hwBar.cpu, d.cpu_pct);
+    }
+    if (_hwBar.ram && d.ram) {
+      _hwBar.ram.textContent = `${d.ram.pct}% (${d.ram.used_gb}/${d.ram.total_gb} GB)`;
+      _colorStat(_hwBar.ram, d.ram.pct);
+    }
+    if (_hwBar.gpu) {
+      _hwBar.gpu.textContent = d.vram ? `${Math.round((d.vram.used_gb / d.vram.total_gb) * 100)}%` : '—';
+    }
+    if (_hwBar.vram && d.vram) {
+      _hwBar.vram.textContent = `${d.vram.used_gb}/${d.vram.total_gb} GB`;
+      _colorStat(_hwBar.vram, (d.vram.used_gb / d.vram.total_gb) * 100);
+    }
+    if (_hwBar.models) {
+      const names = (d.loaded_models || []).map((m) => m.split(':')[0]).join(', ') || (d.model ? d.model.split(':')[0] : '—');
+      _hwBar.models.textContent = names;
+    }
+  } catch { /* silencieux */ }
+}
+
 _checkStatus();
+_updateHwBar();
 setInterval(_checkStatus, 30_000);
+setInterval(_updateHwBar, 15_000);
 
 // ── Navigation ──────────────────────────────────────────────────
 function _updateNavActive(viewName, pageKey) {
