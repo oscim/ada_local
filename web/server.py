@@ -253,6 +253,7 @@ async def page_home():
     """Entités domotiques unifiées (Kasa, HA, Domoticz) pour la page Domotique."""
     import asyncio
     from core.unified_entities import unified_entity_service
+    from core.runtime_state import runtime_state
 
     loop = asyncio.get_event_loop()
     entities = await loop.run_in_executor(
@@ -277,10 +278,44 @@ async def page_home():
         for e in entities
     ]
 
-    providers = [
-        {"id": p.id, "name": p.name, "status": p.status}
-        for p in unified_entity_service.get_providers()
-    ]
+    # Statuts providers : cross-référencer avec runtime_state (HA, Domoticz)
+    # et dériver Kasa depuis le nombre d'entités récupérées.
+    # Si les données infra sont périmées (>120s), on relance un refresh.
+    from datetime import datetime, timezone as _tz
+    state_snapshot = runtime_state.get_state()
+    updated_at = state_snapshot.get("updated_at", "")
+    try:
+        age_s = (datetime.now(_tz.utc) - datetime.fromisoformat(updated_at)).total_seconds()
+    except Exception:
+        age_s = 9999
+    if age_s > 120:
+        await loop.run_in_executor(None, runtime_state.refresh)
+
+    infra_services = runtime_state.get_infra_summary().get("services", {})
+
+    _PROVIDER_TO_INFRA = {
+        "home_assistant": "home_assistant",
+        "domoticz":       "domoticz",
+    }
+    _PROVIDER_LABELS = {
+        "kasa":           "Kasa",
+        "home_assistant": "Home Assistant",
+        "domoticz":       "Domoticz",
+    }
+
+    raw_providers = {p.id: p for p in unified_entity_service.get_providers()}
+    kasa_entity_count = sum(1 for e in entities if e.provider == "kasa")
+
+    providers = []
+    for pid, label in _PROVIDER_LABELS.items():
+        if pid in _PROVIDER_TO_INFRA:
+            svc = infra_services.get(_PROVIDER_TO_INFRA[pid], {})
+            status = svc.get("status", "unknown")
+        elif pid == "kasa":
+            status = "online" if kasa_entity_count > 0 else "unknown"
+        else:
+            status = getattr(raw_providers.get(pid), "status", "unknown")
+        providers.append({"id": pid, "name": label, "status": status})
 
     return {"entities": serialized, "count": len(serialized), "providers": providers}
 
