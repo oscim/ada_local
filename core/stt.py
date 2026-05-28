@@ -9,6 +9,7 @@ Le processus parent (Qt) communique avec le sous-processus via une Queue.
 import queue
 import threading
 import multiprocessing
+import time
 from typing import Callable
 
 from config import (

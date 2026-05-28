@@ -8,10 +8,55 @@ Usage:
     text  = runtime_state.format_infra_status_fr()
 """
 
+import json
 import subprocess
 import threading
+import warnings
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Custom endpoints — URLs personnalisées à surveiller
+# ---------------------------------------------------------------------------
+_CUSTOM_EP_FILE = Path(__file__).parent.parent / "config" / "custom_endpoints.json"
+
+
+def _load_custom_endpoints() -> list[dict]:
+    """Charge les endpoints personnalisés depuis config/custom_endpoints.json."""
+    try:
+        if _CUSTOM_EP_FILE.exists():
+            return json.loads(_CUSTOM_EP_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def add_custom_endpoint(name: str, url: str) -> None:
+    """Ajoute ou met à jour un endpoint personnalisé."""
+    eps = _load_custom_endpoints()
+    for ep in eps:
+        if ep["name"] == name:
+            ep["url"] = url
+            break
+    else:
+        eps.append({"name": name, "url": url})
+    _CUSTOM_EP_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CUSTOM_EP_FILE.write_text(
+        json.dumps(eps, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def remove_custom_endpoint(name: str) -> bool:
+    """Supprime un endpoint personnalisé. Retourne True si trouvé."""
+    eps = _load_custom_endpoints()
+    new_eps = [ep for ep in eps if ep["name"] != name]
+    if len(new_eps) == len(eps):
+        return False
+    _CUSTOM_EP_FILE.write_text(
+        json.dumps(new_eps, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +126,41 @@ def _check_navidrome(nav_url: str, user: str, password: str) -> dict:
         return {"status": "offline", "details": str(e)[:80]}
 
 
+def _check_domoticz(domoticz_url: str, username: str, password: str) -> dict:
+    """GET /json.htm?type=command&param=getversion — vérifie Domoticz."""
+    if not domoticz_url:
+        return {"status": "unknown", "details": "non configuré"}
+    try:
+        import requests
+
+        auth = (username, password) if username else None
+        r = requests.get(
+            f"{domoticz_url.rstrip('/')}/json.htm",
+            params={"type": "command", "param": "getversion"},
+            auth=auth,
+            timeout=3,
+        )
+        if r.status_code == 200:
+            body = r.json()
+            if body.get("status") == "OK":
+                return {"status": "online", "details": body.get("version", "")}
+        return {"status": "offline", "details": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"status": "offline", "details": str(e)[:80]}
+
+
+def _check_custom_url(url: str) -> dict:
+    """GET simple — vérifie si une URL personnalisée répond."""
+    try:
+        import requests
+        r = requests.get(url, timeout=5, verify=False, allow_redirects=True)
+        if r.status_code < 400:
+            return {"status": "online", "details": f"HTTP {r.status_code}"}
+        return {"status": "offline", "details": f"HTTP {r.status_code}"}
+    except Exception as e:
+        return {"status": "offline", "details": str(e)[:80]}
+
+
 def _check_docker() -> dict:
     """docker ps — liste les containers actifs."""
     try:
@@ -108,8 +188,19 @@ def _check_docker() -> dict:
 def _check_cuda() -> bool | None:
     """Détecte CUDA sans planter si torch n'est pas installé."""
     try:
-        import torch
-        return torch.cuda.is_available()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=".*pynvml package is deprecated.*",
+                category=FutureWarning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=".*CUDA initialization: The NVIDIA driver on your system is too old.*",
+                category=UserWarning,
+            )
+            import torch
+            return torch.cuda.is_available()
     except Exception:
         return None
 
@@ -189,6 +280,7 @@ class RuntimeStateManager:
                 "n8n":            {"status": "unknown", "details": ""},
                 "home_assistant": {"status": "unknown", "details": ""},
                 "navidrome":      {"status": "unknown", "details": ""},
+                "domoticz":       {"status": "unknown", "details": ""},
             },
             "docker":     {"status": "unknown", "containers": []},
             "voice":      {"stt": None, "tts": None, "wake_word": None},
@@ -210,10 +302,20 @@ class RuntimeStateManager:
         nav_user = nav_cfg.get("user", "")
         nav_pass = nav_cfg.get("password", "")
 
+        domo_url = settings.get("domoticz.url", "")
+        domo_user = settings.get("domoticz.username", "")
+        domo_pass = settings.get("domoticz.password", "")
+
         cuda = _check_cuda()
         warnings = []
         if cuda is False:
             warnings.append("CUDA indisponible, fallback CPU")
+
+        custom_eps = _load_custom_endpoints()
+        custom_services = {
+            ep["name"]: _check_custom_url(ep["url"])
+            for ep in custom_eps
+        }
 
         return {
             "services": {
@@ -221,6 +323,8 @@ class RuntimeStateManager:
                 "n8n":            _check_n8n(n8n_url),
                 "home_assistant": _check_home_assistant(ha_url, ha_token),
                 "navidrome":      _check_navidrome(nav_url, nav_user, nav_pass),
+                "domoticz":       _check_domoticz(domo_url, domo_user, domo_pass),
+                **custom_services,
             },
             "docker":     _check_docker(),
             "voice":      _check_voice(),
@@ -237,7 +341,12 @@ class RuntimeStateManager:
             "n8n":            "n8n",
             "home_assistant": "Home Assistant",
             "navidrome":      "Navidrome",
+            "domoticz":       "Domoticz",
         }
+        # Ajouter les custom endpoints avec leur propre label
+        custom_eps = _load_custom_endpoints()
+        for ep in custom_eps:
+            labels[ep["name"]] = ep["name"]
         status_fr = {"online": "en ligne", "offline": "hors ligne", "unknown": "statut non vérifié"}
 
         lines = ["🖥️ *État infrastructure*\n"]

@@ -563,7 +563,10 @@ class FunctionExecutor:
             return {"success": False, "message": "No search query provided", "data": None}
         
         try:
-            from duckduckgo_search import DDGS
+            try:
+                from ddgs import DDGS  # New package name
+            except Exception:
+                from duckduckgo_search import DDGS  # Backward-compatible fallback
             
             with DDGS() as ddgs:
                 results = list(ddgs.text(query, max_results=5))

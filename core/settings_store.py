@@ -51,6 +51,13 @@ DEFAULT_SETTINGS = {
         "enabled": True,
         "priority": 50,
     },
+    "domoticz": {
+        "enabled": False,
+        "url": "",
+        "username": "",
+        "password": "",
+        "priority": 80,
+    },
     "k1": {
         "ip": "",
         "password": ""

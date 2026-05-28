@@ -1,0 +1,543 @@
+"""
+ADA Web Plugin — FastAPI Server
+
+Non-intrusive : ne modifie aucun fichier existant.
+Lancer avec : python web_server.py
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+# Assurer que la racine du projet est dans sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from core.memory_store import memory_store
+from core.runtime_state import runtime_state
+from core.skill_manager import skill_manager
+from web.pipeline import process_message
+
+# ---------------------------------------------------------------------------
+app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
+
+_STATIC = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    # Ensure semantic memory DB is available for web chat sessions.
+    memory_store.initialize()
+
+
+# ---------------------------------------------------------------------------
+# PWA obligatoire hors /static/
+# ---------------------------------------------------------------------------
+
+@app.get("/manifest.json")
+async def manifest():
+    return FileResponse(str(_STATIC / "manifest.json"), media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(str(_STATIC / "sw.js"), media_type="application/javascript")
+
+
+# ---------------------------------------------------------------------------
+# Shell HTML (SPA / PWA)
+# ---------------------------------------------------------------------------
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return (_STATIC / "index.html").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# API
+# ---------------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    message: str
+    history: list[dict] = []
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest):
+    """
+    Stream la réponse d'ADA en Server-Sent Events.
+    Chaque event : data: {"text": "..."}\n\n
+    Fin           : data: [DONE]\n\n
+    """
+    async def _sse():
+        try:
+            async for chunk in process_message(req.message, req.history):
+                yield f"data: {json.dumps({'text': chunk})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/status")
+async def status():
+    """Vérifie la connexion Ollama."""
+    import httpx
+    from config import OLLAMA_URL
+    base = OLLAMA_URL.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            ollama_ok = r.status_code == 200
+    except Exception:
+        ollama_ok = False
+    return {"ada": "online", "ollama": "online" if ollama_ok else "offline"}
+
+
+@app.get("/api/dashboard")
+async def dashboard():
+    """Données du tableau de bord : système + Ollama + infos ADA."""
+    import httpx
+    import psutil
+    from config import OLLAMA_URL, RESPONDER_MODEL
+
+    base = OLLAMA_URL.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+
+    # Ollama status + modèles chargés
+    ollama_ok = False
+    loaded_models: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            if r.status_code == 200:
+                ollama_ok = True
+            # Modèles en mémoire
+            rr = await client.get(f"{base}/api/ps")
+            if rr.status_code == 200:
+                loaded_models = [m["name"] for m in rr.json().get("models", [])]
+    except Exception:
+        pass
+
+    # Ressources système
+    cpu = psutil.cpu_percent(interval=0.3)
+    ram = psutil.virtual_memory()
+    disk = psutil.disk_usage("/")
+
+    # GPU VRAM (optionnel)
+    vram: dict | None = None
+    try:
+        import pynvml
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        vram = {
+            "used_gb": round(mem.used / 1024**3, 1),
+            "total_gb": round(mem.total / 1024**3, 1),
+        }
+    except Exception:
+        pass
+
+    return {
+        "ollama": "online" if ollama_ok else "offline",
+        "model": RESPONDER_MODEL,
+        "loaded_models": loaded_models,
+        "cpu_pct": round(cpu, 1),
+        "ram": {
+            "used_gb": round(ram.used / 1024**3, 1),
+            "total_gb": round(ram.total / 1024**3, 1),
+            "pct": ram.percent,
+        },
+        "disk": {
+            "used_gb": round(disk.used / 1024**3, 1),
+            "total_gb": round(disk.total / 1024**3, 1),
+            "pct": round(disk.percent, 1),
+        },
+        "vram": vram,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Mémoire sémantique
+# ---------------------------------------------------------------------------
+
+@app.get("/api/memory/stats")
+async def memory_stats():
+    return memory_store.stats()
+
+
+@app.get("/api/memory/recent")
+async def memory_recent(limit: int = 50):
+    from datetime import datetime
+    items = memory_store.recent(limit=limit)
+    for m in items:
+        m["ts_fmt"] = datetime.fromtimestamp(m["timestamp"]).strftime("%d/%m %H:%M")
+    return items
+
+
+@app.get("/api/memory/consolidated")
+async def memory_consolidated(days: int = 5):
+    return memory_store.get_consolidated(days=days)
+
+
+class MemorySearchRequest(BaseModel):
+    query: str
+
+
+@app.post("/api/memory/search")
+async def memory_search(req: MemorySearchRequest):
+    from datetime import datetime
+    if req.query.strip():
+        items = memory_store.search(req.query, limit=50)
+    else:
+        items = memory_store.recent(limit=50)
+    for m in items:
+        m["ts_fmt"] = datetime.fromtimestamp(m["timestamp"]).strftime("%d/%m %H:%M")
+    return items
+
+
+@app.delete("/api/memory/{memory_id}")
+async def memory_delete(memory_id: int):
+    memory_store.delete(memory_id)
+    return {"ok": True}
+
+
+@app.post("/api/memory/consolidate")
+async def memory_consolidate():
+    """Lance la consolidation mémorielle en tâche de fond."""
+    import asyncio
+    from datetime import date
+
+    async def _run():
+        from core.memory_consolidator import consolidate_today
+        try:
+            consolidate_today(force=True)
+        except Exception as exc:
+            print(f"[Web] Consolidation error: {exc}")
+
+    asyncio.create_task(_run())
+    return {"status": "running"}
+
+
+@app.post("/api/admin/restart")
+async def admin_restart():
+    """Redémarre le serveur web ADA (re-exec du process)."""
+    import asyncio, os, sys
+
+    async def _do():
+        await asyncio.sleep(0.6)
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    asyncio.create_task(_do())
+    return {"status": "restarting"}
+
+
+@app.get("/api/page/home")
+async def page_home():
+    """Entités domotiques unifiées (Kasa, HA, Domoticz) pour la page Domotique."""
+    import asyncio
+    from core.unified_entities import unified_entity_service
+
+    loop = asyncio.get_event_loop()
+    entities = await loop.run_in_executor(
+        None,
+        lambda: unified_entity_service.get_unified_entities(force_refresh=True),
+    )
+
+    serialized = [
+        {
+            "id":       e.id,
+            "name":     e.name,
+            "type":     e.type,
+            "zone":     e.zone,
+            "state":    e.state,
+            "provider": e.provider,
+            "attributes": {
+                k: v for k, v in (e.attributes or {}).items()
+                if k in ("brightness", "temperature", "humidity", "battery",
+                         "device_class", "unit_of_measurement", "volume_level")
+            },
+        }
+        for e in entities
+    ]
+
+    providers = [
+        {"id": p.id, "name": p.name, "status": p.status}
+        for p in unified_entity_service.get_providers()
+    ]
+
+    return {"entities": serialized, "count": len(serialized), "providers": providers}
+
+
+@app.get("/api/page/infrastructure")
+async def page_infrastructure():
+    """État infrastructure pour la page desktop dédiée."""
+    runtime_state.refresh()
+    return runtime_state.get_infra_summary()
+
+
+# ---------------------------------------------------------------------------
+# Endpoints personnalisés (surveillance URLs custom)
+# ---------------------------------------------------------------------------
+
+class EndpointRequest(BaseModel):
+    name: str
+    url: str
+
+
+@app.get("/api/infra/endpoints")
+async def list_custom_endpoints():
+    from core.runtime_state import _load_custom_endpoints
+    return _load_custom_endpoints()
+
+
+@app.post("/api/infra/endpoints")
+async def add_custom_endpoint_api(req: EndpointRequest):
+    from core.runtime_state import add_custom_endpoint
+    add_custom_endpoint(req.name.strip(), req.url.strip())
+    return {"ok": True}
+
+
+@app.delete("/api/infra/endpoints/{name}")
+async def remove_custom_endpoint_api(name: str):
+    from core.runtime_state import remove_custom_endpoint
+    found = remove_custom_endpoint(name)
+    return {"ok": found}
+
+
+@app.get("/api/page/memory")
+async def page_memory(limit: int = 30):
+    """Récents souvenirs + stats pour la page Mémoire desktop."""
+    safe_limit = max(5, min(limit, 100))
+    return {
+        "stats": memory_store.stats(),
+        "recent": memory_store.recent(limit=safe_limit),
+    }
+
+
+@app.get("/api/page/skills")
+async def page_skills():
+    """Liste des skills chargées pour la page Compétences desktop."""
+    skills = []
+    for s in skill_manager.skills:
+        skills.append(
+            {
+                "name": s.name,
+                "description": s.description,
+                "triggers": s.triggers,
+                "always": bool(s.always),
+            }
+        )
+    return {"count": len(skills), "skills": skills}
+
+
+# ---------------------------------------------------------------------------
+# Agent Web (Playwright + Ollama)
+# ---------------------------------------------------------------------------
+
+class WebAgentRequest(BaseModel):
+    instruction: str
+
+
+@app.post("/api/agent/web")
+async def agent_web(request: Request, req: WebAgentRequest):
+    """
+    Lance l'agent web (Playwright headless + Ollama) et streame les étapes.
+    Events SSE : {"type": "step"|"result"|"error", "text": "..."}
+    Fin         : [DONE]
+    """
+    import re
+    import httpx
+    from playwright.async_api import async_playwright
+    from config import OLLAMA_URL, RESPONDER_MODEL
+    from core.settings_store import settings as app_settings
+    from core.agent.text_agent import _SYSTEM_PROMPT
+
+    MAX_STEPS = 12
+    MAX_PAGE_CHARS = 4000
+
+    def _evt(type_: str, text: str) -> str:
+        return f"data: {json.dumps({'type': type_, 'text': text})}\n\n"
+
+    async def _sse():
+        goal = req.instruction.strip()
+        if not goal:
+            yield _evt("error", "Instruction vide.")
+            yield "data: [DONE]\n\n"
+            return
+
+        ollama_url = app_settings.get("ollama_url", OLLAMA_URL)
+        base = ollama_url.rstrip("/")
+        if base.endswith("/api"):
+            base = base[:-4]
+        chat_url = f"{base}/api/chat"
+        model = app_settings.get("models.chat", RESPONDER_MODEL)
+
+        yield _evt("step", f"Démarrage : {goal}")
+
+        try:
+            async with async_playwright() as pw:
+                browser = await pw.chromium.launch(
+                    headless=True,
+                    args=["--disable-blink-features=AutomationControlled"],
+                )
+                ctx = await browser.new_context(
+                    viewport={"width": 1280, "height": 720},
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/120.0.0.0 Safari/537.36"
+                    ),
+                )
+                page = await ctx.new_page()
+                history: list[dict] = []
+
+                for step in range(1, MAX_STEPS + 1):
+                    if await request.is_disconnected():
+                        yield _evt("step", "Arrêté par l'utilisateur.")
+                        await browser.close()
+                        return
+
+                    # Résumé de la page courante
+                    try:
+                        url   = page.url
+                        title = await page.title()
+                        body  = await page.eval_on_selector("body", "el => el.innerText") or ""
+                        body  = re.sub(r"\s{3,}", "\n", body)[:MAX_PAGE_CHARS]
+                        links = await page.eval_on_selector_all(
+                            "a[href]",
+                            "els => els.slice(0,30).map(e => ({t:e.innerText.trim(), h:e.href})).filter(l=>l.t)",
+                        )
+                        links_str = "\n".join(
+                            f"  [{l['t'][:60]}] {l['h'][:80]}" for l in links[:20]
+                        )
+                        page_summary = (
+                            f"URL: {url}\nTitle: {title}\n"
+                            f"Links:\n{links_str}\nBody:\n{body}"
+                        )
+                    except Exception as e:
+                        page_summary = f"(erreur lecture page: {e})"
+
+                    user_msg = (
+                        f"Goal: {goal}\n\nStep {step}/{MAX_STEPS}\n\n"
+                        f"Current page:\n{page_summary[:MAX_PAGE_CHARS + 500]}\n\n"
+                        "Output the next JSON action:"
+                    )
+                    messages = [
+                        {"role": "system", "content": _SYSTEM_PROMPT},
+                        *history,
+                        {"role": "user", "content": user_msg},
+                    ]
+
+                    yield _evt("step", f"[Étape {step}/{MAX_STEPS}] Réflexion…")
+
+                    try:
+                        async with httpx.AsyncClient(timeout=120.0) as client:
+                            r = await client.post(
+                                chat_url,
+                                json={
+                                    "model": model,
+                                    "messages": messages,
+                                    "stream": False,
+                                    "think": False,
+                                },
+                            )
+                            r.raise_for_status()
+                            reply = r.json().get("message", {}).get("content", "").strip()
+                    except Exception as e:
+                        yield _evt("error", f"Erreur LLM : {e}")
+                        await browser.close()
+                        return
+
+                    # Parse action JSON (cherche le premier objet JSON dans la réponse)
+                    action = None
+                    m = re.search(r"\{[^{}]+\}", reply, re.DOTALL)
+                    if m:
+                        try:
+                            action = json.loads(m.group())
+                        except Exception:
+                            pass
+
+                    if not action:
+                        history.append({"role": "assistant", "content": reply})
+                        history.append({"role": "user", "content": "Output a valid JSON action."})
+                        yield _evt("step", f"[Étape {step}] Action invalide, nouvelle tentative…")
+                        continue
+
+                    history.append({"role": "assistant", "content": json.dumps(action)})
+                    action_name = action.get("action", "")
+                    yield _evt("step", f"[Étape {step}] → {action_name}: {json.dumps(action)[:120]}")
+
+                    # Actions terminales
+                    if action_name in ("done", "extract"):
+                        result = action.get("result", reply)
+                        yield _evt("result", result)
+                        await browser.close()
+                        return
+
+                    # Exécution de l'action navigateur
+                    try:
+                        if action_name == "navigate":
+                            await page.goto(
+                                action.get("url", ""),
+                                wait_until="domcontentloaded",
+                                timeout=15_000,
+                            )
+                            # Fermer les dialogues de consentement
+                            for sel in [
+                                "button:has-text('Tout accepter')",
+                                "button:has-text('Accept all')",
+                                "button:has-text('J\\'accepte')",
+                            ]:
+                                try:
+                                    btn = page.locator(sel).first
+                                    if await btn.is_visible(timeout=800):
+                                        await btn.click(timeout=2000)
+                                        break
+                                except Exception:
+                                    pass
+
+                        elif action_name == "click":
+                            link_text = action.get("link_text", "")
+                            await page.get_by_text(link_text, exact=False).first.click(timeout=5_000)
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                            except Exception:
+                                pass
+
+                        elif action_name == "scroll_down":
+                            await page.evaluate("window.scrollBy(0, window.innerHeight)")
+
+                    except Exception as e:
+                        yield _evt("step", f"  ✗ Erreur action : {e}")
+
+                yield _evt("step", "Nombre maximum d'étapes atteint.")
+                yield _evt("result", "L'agent n'a pas pu terminer la tâche dans la limite d'étapes.")
+                await browser.close()
+
+        except Exception as e:
+            yield _evt("error", str(e))
+        finally:
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        _sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

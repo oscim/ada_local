@@ -34,6 +34,12 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["PYTORCH_NO_CUDA_MEMORY_CACHING"] = "1"  # reduce CUDA cleanup semaphores
 os.environ["PYTHONWARNINGS"] = "ignore::UserWarning"  # suppress resource_tracker semaphore warning in subprocesses
 
+# PyAudio / PortAudio stability on Linux
+# PA_ALSA_PLUGHW=1  : use ALSA plug layer (avoids direct hw format mismatches that segfault)
+# AUDIODEV=default  : fallback to system default device if PA_ALSA_PLUGHW is ignored
+os.environ.setdefault("PA_ALSA_PLUGHW", "1")
+os.environ.setdefault("AUDIODEV", "default")
+
 import warnings
 import sys
 

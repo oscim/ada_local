@@ -239,6 +239,7 @@ class HomeAutomationTab(QWidget):
         from PySide6.QtWidgets import QApplication
         QApplication.instance().aboutToQuit.connect(self._cleanup)
         i18n.language_changed.connect(self._on_language_changed)
+        settings.setting_changed.connect(self._on_setting_changed)
 
     # ------------------------------------------------------------------ #
     # Build UI                                                             #
@@ -574,6 +575,16 @@ class HomeAutomationTab(QWidget):
 
     def _on_language_changed(self, _lang: str = ""):
         pass  # Filter labels are not i18n-translated (matched against ADA type constants)
+
+    def _on_setting_changed(self, key: str, value):
+        """Auto-refresh when a provider is enabled or disabled."""
+        _PROVIDER_ENABLED_KEYS = (
+            "domoticz.enabled",
+            "home_assistant.enabled",
+            "kasa.enabled",
+        )
+        if key in _PROVIDER_ENABLED_KEYS:
+            self._on_refresh()
 
     def _cleanup(self):
         self._destroyed = True

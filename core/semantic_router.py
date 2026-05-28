@@ -258,18 +258,23 @@ class EmbeddingRouter:
         self._threshold: float = float(sr.get("confidence_threshold", 0.45))
         self._timeout: float = float(sr.get("embed_timeout_s", 5.0))
         self._cooldown: float = float(sr.get("retry_cooldown_s", 30.0))
-        self._embed_url: str = base_url.rstrip("/") + "/api/embeddings"
+        self._embed_url: str = base_url.rstrip("/") + "/api/embed"
 
     def _embed(self, text: str) -> Optional[np.ndarray]:
         """Return a float32 vector for *text*, or None on error."""
         try:
             resp = requests.post(
                 self._embed_url,
-                json={"model": self._model, "prompt": text},
+                json={"model": self._model, "input": text},
                 timeout=self._timeout,
             )
             resp.raise_for_status()
-            vec = np.array(resp.json()["embedding"], dtype=np.float32)
+            data = resp.json()
+            # /api/embed returns {"embeddings": [[...]]} (new Ollama ≥ 0.5)
+            raw = data.get("embeddings") or data.get("embedding")
+            if isinstance(raw, list) and isinstance(raw[0], list):
+                raw = raw[0]  # unwrap outer list
+            vec = np.array(raw, dtype=np.float32)
             return vec
         except Exception as exc:
             logger.warning("[SemanticRouter] embed failed: %s", exc)
