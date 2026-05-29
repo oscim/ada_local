@@ -1,7 +1,7 @@
 /* ADA Mobile — Service Worker
    Cache the app shell for offline support */
 
-const CACHE = "ada-v7";
+const CACHE = "ada-v8";
 const SHELL = [
   "/",
   "/static/manifest.json",

@@ -448,6 +448,16 @@ class SettingsTab(ScrollArea):
         # ── Personalization ───────────────────────────────────────────
         self.personal_group = SettingCardGroup(tr("settings.personalization"), self.scrollWidget)
 
+        self.user_name_card = TextInputCard(
+            FIF.PEOPLE,
+            tr("settings.user_name"),
+            tr("settings.user_name_desc"),
+            "user.name",
+            "Aurelien",
+            self.personal_group
+        )
+        self.personal_group.addSettingCard(self.user_name_card)
+
         self.theme_card = ComboBoxCard(
             FIF.BRUSH,
             tr("settings.theme"),

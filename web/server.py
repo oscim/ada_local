@@ -781,3 +781,106 @@ async def agent_web(request: Request, req: WebAgentRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Marketing
+# ---------------------------------------------------------------------------
+
+class MarketingRequest(BaseModel):
+    skill_name: str = "margepro"
+    content_type: str
+    reseau: str
+    secteur: str
+    ton: str
+    brief: str = ""
+    model: str = ""
+
+
+@app.get("/api/marketing/skills")
+async def marketing_skills():
+    from core.marketing_executor import list_marketing_skills
+    return list_marketing_skills()
+
+
+@app.get("/api/marketing/models")
+async def marketing_models():
+    import httpx
+    from config import OLLAMA_URL
+    base = OLLAMA_URL.rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        return []
+
+
+@app.get("/api/marketing/meta")
+async def marketing_meta():
+    from core.marketing_executor import CONTENT_TYPES, RESEAUX, SECTEURS, TONS
+    return {
+        "content_types": list(CONTENT_TYPES.keys()),
+        "reseaux": RESEAUX,
+        "secteurs": SECTEURS,
+        "tons": TONS,
+    }
+
+
+@app.post("/api/marketing/generate")
+async def marketing_generate(req: MarketingRequest):
+    import asyncio
+    from core.marketing_executor import generate_stream
+
+    queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_event_loop()
+
+    def _run():
+        generate_stream(
+            content_type=req.content_type,
+            reseau=req.reseau,
+            secteur=req.secteur,
+            ton=req.ton,
+            brief=req.brief,
+            skill_name=req.skill_name,
+            model=req.model,
+            on_token=lambda t: loop.call_soon_threadsafe(queue.put_nowait, ("token", t)),
+            on_done=lambda _: loop.call_soon_threadsafe(queue.put_nowait, ("done", None)),
+            on_error=lambda e: loop.call_soon_threadsafe(queue.put_nowait, ("error", e)),
+        )
+
+    loop.run_in_executor(None, _run)
+
+    async def _sse():
+        while True:
+            kind, data = await queue.get()
+            if kind == "token":
+                yield f"data: {json.dumps({'text': data})}\n\n"
+            elif kind == "done":
+                yield "data: [DONE]\n\n"
+                break
+            else:
+                yield f"data: {json.dumps({'error': data})}\n\n"
+                yield "data: [DONE]\n\n"
+                break
+
+    return StreamingResponse(
+        _sse(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/marketing/history")
+async def marketing_history():
+    from core.marketing_executor import get_history
+    return get_history(limit=50)
+
+
+@app.delete("/api/marketing/history/{entry_id}")
+async def marketing_history_delete(entry_id: int):
+    from core.marketing_executor import delete_history_entry
+    delete_history_entry(entry_id)
+    return {"ok": True}

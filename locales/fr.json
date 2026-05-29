@@ -1,6 +1,8 @@
 {
   "settings": {
     "personalization": "Personnalisation",
+    "user_name": "Votre prénom",
+    "user_name_desc": "Utilisé dans les briefings, la mémoire et Telegram",
     "theme": "Thème de l'application",
     "theme_desc": "Modifier l'apparence de l'application",
     "language": "Langue",
@@ -127,6 +129,7 @@
     "music": "Musique",
     "library": "Bibliothèque",
     "infrastructure": "Infrastructure",
+    "marketing": "Marketing",
     "settings": "Paramètres"
   },
   "music": {

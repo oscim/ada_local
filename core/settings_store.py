@@ -15,8 +15,11 @@ from PySide6.QtCore import QObject, Signal
 DEFAULT_SETTINGS = {
     "theme": "Dark",
     "ollama_url": "http://localhost:11434",
+    "user": {
+        "name": "Aurelien",
+    },
     "models": {
-        "chat": "qwen3:1.7b",
+        "chat": "mistral:latest",
         "web_agent": "qwen3-vl:4b",
     },
     "web_agent_params": {

@@ -1,6 +1,8 @@
 {
   "settings": {
     "personalization": "Personalization",
+    "user_name": "Your first name",
+    "user_name_desc": "Used in briefings, memory consolidation and Telegram",
     "theme": "Application Theme",
     "theme_desc": "Change the appearance of the application",
     "language": "Language",
@@ -127,6 +129,7 @@
     "music": "Music",
     "library": "Library",
     "infrastructure": "Infrastructure",
+    "marketing": "Marketing",
     "settings": "Settings"
   },
   "music": {

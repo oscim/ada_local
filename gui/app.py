@@ -31,6 +31,7 @@ from gui.tabs.cad import CadTab
 from gui.tabs.home_automation import HomeAutomationTab
 from gui.tabs.printers import PrintersTab
 from gui.tabs.skills import SkillsTab
+from gui.tabs.marketing import MarketingTab
 from gui.tabs.memory import MemoryTab
 from gui.tabs.senses import SensesTab
 from gui.tabs.infrastructure import InfrastructureTab
@@ -226,6 +227,7 @@ class MainWindow(FluentWindow):
         self.browser_lazy = LazyTab(BrowserTab, "browserInterface")
         self.printers_lazy = LazyTab(PrintersTab, "printersInterface")
         self.skills_lazy = LazyTab(SkillsTab, "skillsInterface")
+        self.marketing_lazy = LazyTab(MarketingTab, "marketingInterface")
         self.memory_lazy = LazyTab(MemoryTab, "memoryInterface")
         self.senses_lazy = LazyTab(SensesTab, "sensesInterface")
         self.infra_lazy  = LazyTab(InfrastructureTab, "infrastructureInterface")
@@ -240,6 +242,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.browser_lazy, FIF.GLOBE, tr("nav.browser"))
         self.addSubInterface(self.printers_lazy, FIF.TILES, tr("nav.printers"))
         self.addSubInterface(self.skills_lazy, FIF.BOOK_SHELF, tr("nav.skills"))
+        self.addSubInterface(self.marketing_lazy, FIF.PENCIL_INK, tr("nav.marketing"))
         self.addSubInterface(self.memory_lazy, FIF.HISTORY, tr("nav.memory"))
         self.addSubInterface(self.senses_lazy, FIF.HEADPHONE, tr("nav.senses"))
         self.addSubInterface(self.music_lazy, FIF.MUSIC, tr("nav.music"))

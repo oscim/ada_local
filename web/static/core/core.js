@@ -12,6 +12,7 @@ const VIEW_LOADERS = {
   page:      () => import('/static/views/page/index.js'),
   webagent:  () => import('/static/views/webagent/index.js'),
   cameras:   () => import('/static/views/cameras/index.js'),
+  marketing: () => import('/static/views/marketing/index.js'),
 };
 
 const VIEW_TITLES = {
@@ -20,6 +21,7 @@ const VIEW_TITLES = {
   memory:    'Mémoire',
   webagent:  'Agent Web',
   cameras:   'Caméras',
+  marketing: 'Marketing',
 };
 
 // ── État global ─────────────────────────────────────────────────

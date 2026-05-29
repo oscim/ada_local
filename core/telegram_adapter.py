@@ -34,7 +34,7 @@ def _system_prompt() -> str:
     except Exception:
         lang_instr = "Réponds en français. Sois concis et précis."
     return (
-        f"Tu es ADA, une assistante IA locale tournant sur l'ordinateur de Jeff. "
+        f"Tu es ADA, une assistante IA locale tournant sur l'ordinateur de {settings.get('user.name', 'ton utilisateur')}. "
         f"{lang_instr} "
         f"Tu es accessible via Telegram — sois utile, précise et naturelle."
     )
