@@ -309,8 +309,118 @@ function _panelBibliotheque() {
   ].join('');
 }
 
+// ── Panel Auth ────────────────────────────────────────────────
+let _authUsers = [];
+let _authGroups = {};
+
+async function _panelAuth() {
+  // Charger la config auth
+  let authEnabled = false;
+  let isAdmin = false;
+  let users = [];
+  let groups = {};
+  try {
+    const cfg = await fetch('/api/auth/config').then(r => r.json());
+    authEnabled = cfg.enabled || false;
+    groups = cfg.groups || {};
+  } catch {}
+
+  // Quand auth désactivée : accès admin libre (réseau local) — permet de préparer les comptes
+  if (!authEnabled) {
+    isAdmin = true;
+    try {
+      users = await fetch('/api/auth/admin/users').then(r => r.ok ? r.json() : []);
+      _authUsers = users;
+      _authGroups = groups;
+    } catch {}
+  } else {
+    try {
+      const me = await fetch('/api/auth/me').then(r => r.json());
+      isAdmin = me.groups?.includes('admin');
+      if (isAdmin) {
+        users = await fetch('/api/auth/admin/users').then(r => r.json());
+      }
+      _authUsers = users;
+      _authGroups = groups;
+    } catch {}
+  }
+
+  const groupBadges = Object.keys(groups).map(g =>
+    `<span class="auth-group-badge">${g}</span>`
+  ).join(' ');
+
+  const usersHtml = isAdmin && users.length > 0 ? `
+    <div class="auth-users-list">
+      ${users.map(u => `
+        <div class="auth-user-row" data-uid="${u.id}">
+          <div class="auth-user-info">
+            <span class="auth-user-name">${u.display_name}</span>
+            <span class="auth-user-login">@${u.username}</span>
+            <span class="auth-user-badges">${(u.groups || []).map(g =>
+              `<span class="auth-group-badge">${g}</span>`).join('')}
+            </span>
+          </div>
+          <div class="auth-user-actions">
+            <span class="auth-user-devices">${u.device_count || 0} appareil(s)</span>
+            <button class="s-btn auth-invite-btn" data-uid="${u.id}" data-name="${u.display_name}">
+              QR invitation
+            </button>
+            ${u.id !== '_self' ? `<button class="s-btn danger auth-del-btn" data-uid="${u.id}">✕</button>` : ''}
+          </div>
+        </div>`).join('')}
+    </div>` : '';
+
+  const createForm = isAdmin ? `
+    <div class="auth-create-form">
+      <h4 class="s-section-title" style="margin-bottom:.75rem">Créer un utilisateur</h4>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <input id="auth-new-username"     class="s-input" type="text" placeholder="login" style="flex:1;min-width:100px"/>
+        <input id="auth-new-displayname"  class="s-input" type="text" placeholder="Prénom" style="flex:1;min-width:100px"/>
+        <select id="auth-new-groups" class="s-input" style="min-width:130px">
+          ${Object.keys(groups).map(g => `<option value="${g}">${g}</option>`).join('')}
+        </select>
+        <button class="s-btn" id="auth-create-user-btn">Créer</button>
+      </div>
+    </div>` : '';
+
+  const myDevices = authEnabled ? `
+    <div class="s-section">
+      <h3 class="s-section-title">Mes appareils</h3>
+      <div id="auth-devices-list"><span style="color:#64748b;font-size:.85rem">Chargement…</span></div>
+      <div style="margin-top:.75rem;display:flex;gap:.5rem;flex-wrap:wrap">
+        <button class="s-btn" id="auth-gen-recovery">Générer des codes de récupération</button>
+      </div>
+      <div id="auth-recovery-codes" class="auth-recovery-codes hidden"></div>
+    </div>` : '';
+
+  return `
+  ${_sec('Authentification', [
+    _mkToggle('auth.enabled', 'Activer l\'authentification',
+      'Protège toutes les routes par JWT. Un redémarrage du serveur applique le changement.'),
+    authEnabled ? `<div class="s-row">
+      <div class="s-row-info">
+        <div class="s-row-label">Groupes disponibles</div>
+        <div class="s-row-desc">Chaque groupe donne accès à un sous-ensemble de menus.</div>
+      </div>
+      <div>${groupBadges}</div>
+    </div>` : '',
+  ].join(''))}
+
+  ${isAdmin ? `
+  <div class="s-section">
+    <h3 class="s-section-title">Utilisateurs (${users.length})</h3>
+    ${!authEnabled && users.length === 0 ? `<div style="color:#f59e0b;font-size:.85rem;margin-bottom:.75rem;padding:.5rem .75rem;background:#451a03;border-radius:6px">⚠️ Créez au moins un utilisateur avant d'activer l'authentification.</div>` : ''}
+    ${usersHtml}
+    ${createForm}
+    <div id="auth-invite-qr" class="auth-invite-qr hidden"></div>
+  </div>` : ''}
+
+  ${myDevices}`;
+}
+
 // ── Build HTML ────────────────────────────────────────────────
-function _buildHTML() {
+async function _buildHTML() {
+  const authHtml = await _panelAuth();
   return `
 <div class="settings-wrap">
   <div class="s-tabbar">
@@ -320,6 +430,7 @@ function _buildHTML() {
     <button class="s-tab" data-panel="print3d">🖨 Impression 3D</button>
     <button class="s-tab" data-panel="music">🎵 Musique</button>
     <button class="s-tab" data-panel="bibliotheque">📚 Bibliothèque</button>
+    <button class="s-tab" data-panel="auth">🔐 Auth</button>
     <span class="s-save-dot" id="s-savedot"></span>
   </div>
   <div class="s-panels">
@@ -329,6 +440,7 @@ function _buildHTML() {
     <div class="s-panel" id="panel-print3d">${_panelPrint3D()}</div>
     <div class="s-panel" id="panel-music">${_panelMusique()}</div>
     <div class="s-panel" id="panel-bibliotheque">${_panelBibliotheque()}</div>
+    <div class="s-panel" id="panel-auth">${authHtml}</div>
   </div>
 </div>`;
 }
@@ -491,6 +603,144 @@ export function applyModuleVisibility() {
   });
 }
 
+// ── Auth event bindings ───────────────────────────────────────
+function _bindAuthEvents(root) {
+  // Bloquer l'activation si aucun utilisateur enregistré
+  const authToggle = root.querySelector('input[data-key="auth.enabled"]');
+  if (authToggle) {
+    authToggle.addEventListener('change', async (e) => {
+      if (!e.target.checked) return; // désactivation toujours permise
+      try {
+        const users = await fetch('/api/auth/admin/users').then(r => r.ok ? r.json() : []);
+        if (!Array.isArray(users) || users.length === 0) {
+          e.target.checked = false;
+          // Annuler la sauvegarde déjà déclenchée par _bindEvents
+          await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'auth.enabled', value: false }),
+          });
+          showToast('⚠️ Créez au moins un utilisateur avant d\'activer l\'auth !');
+          return;
+        }
+      } catch {
+        e.target.checked = false;
+        showToast('Impossible de vérifier les utilisateurs');
+      }
+    }, true); // capture phase → s'exécute avant le listener de _bindEvents
+  }
+
+  // Créer un utilisateur
+  root.querySelector('#auth-create-user-btn')?.addEventListener('click', async () => {
+    const username     = root.querySelector('#auth-new-username')?.value.trim();
+    const display_name = root.querySelector('#auth-new-displayname')?.value.trim() || username;
+    const groups       = [root.querySelector('#auth-new-groups')?.value || 'assistant'];
+    if (!username) { showToast('Nom d\'utilisateur requis'); return; }
+    try {
+      const r = await fetch('/api/auth/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, display_name, groups }),
+      });
+      if (r.ok) { showToast('Utilisateur créé'); location.reload(); }
+      else { const d = await r.json(); showToast(d.detail || 'Erreur'); }
+    } catch { showToast('Erreur réseau'); }
+  });
+
+  // Supprimer un utilisateur
+  root.querySelectorAll('.auth-del-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Désactiver cet utilisateur ?')) return;
+      const uid = btn.dataset.uid;
+      try {
+        await fetch(`/api/auth/admin/users/${uid}`, { method: 'DELETE' });
+        showToast('Utilisateur désactivé');
+        btn.closest('.auth-user-row').remove();
+      } catch { showToast('Erreur'); }
+    });
+  });
+
+  // QR invitation
+  root.querySelectorAll('.auth-invite-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const uid  = btn.dataset.uid;
+      const name = btn.dataset.name;
+      try {
+        const r = await fetch('/api/auth/admin/invite', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: uid, device_name: `Appareil de ${name}` }),
+        });
+        const data = await r.json();
+        const area = root.querySelector('#auth-invite-qr');
+        if (area && data.qr_png_b64) {
+          area.innerHTML = `
+            <p style="color:#94a3b8;font-size:.85rem;margin-bottom:.5rem">
+              QR d'invitation pour <strong>${name}</strong> (valable 1h)
+            </p>
+            <img src="data:image/png;base64,${data.qr_png_b64}"
+                 style="width:180px;height:180px;border-radius:8px" alt="QR invite"/>
+            <p style="color:#64748b;font-size:.75rem;margin-top:.4rem;word-break:break-all">
+              ${data.enroll_url}
+            </p>`;
+          area.classList.remove('hidden');
+        }
+      } catch { showToast('Erreur génération QR'); }
+    });
+  });
+
+  // Codes de récupération
+  root.querySelector('#auth-gen-recovery')?.addEventListener('click', async () => {
+    try {
+      const r = await fetch('/api/auth/recovery/generate', { method: 'POST' });
+      const data = await r.json();
+      const area = root.querySelector('#auth-recovery-codes');
+      if (area) {
+        area.innerHTML = `
+          <p style="color:#fbbf24;font-size:.85rem;margin-bottom:.5rem">
+            ⚠️ Conservez ces codes en lieu sûr. Ils ne seront plus affichés.
+          </p>
+          <div class="recovery-codes-grid">${data.codes.map(c =>
+            `<code class="recovery-code">${c}</code>`).join('')}
+          </div>`;
+        area.classList.remove('hidden');
+      }
+    } catch { showToast('Erreur'); }
+  });
+
+  // Révoquer un appareil
+  root.addEventListener('click', async (e) => {
+    const btn = e.target.closest('.auth-revoke-device');
+    if (!btn) return;
+    const did = btn.dataset.did;
+    if (!confirm('Révoquer cet appareil ?')) return;
+    try {
+      await fetch(`/api/auth/devices/${did}`, { method: 'DELETE' });
+      showToast('Appareil révoqué');
+      btn.closest('.auth-device-row')?.remove();
+    } catch { showToast('Erreur'); }
+  });
+}
+
+async function _loadMyDevices(root) {
+  const list = root.querySelector('#auth-devices-list');
+  if (!list) return;
+  try {
+    const r = await fetch('/api/auth/devices');
+    if (!r.ok) { list.innerHTML = '<span style="color:#64748b;font-size:.85rem">Non disponible</span>'; return; }
+    const devices = await r.json();
+    if (!devices.length) { list.innerHTML = '<span style="color:#64748b;font-size:.85rem">Aucun appareil enregistré</span>'; return; }
+    list.innerHTML = devices.map(d => `
+      <div class="auth-device-row">
+        <span class="auth-device-name">${d.device_name}</span>
+        <span class="auth-device-date">${d.last_seen
+          ? new Date(d.last_seen * 1000).toLocaleDateString('fr')
+          : 'Jamais vu'}</span>
+        <button class="s-btn danger auth-revoke-device" data-did="${d.id}">Révoquer</button>
+      </div>`).join('');
+  } catch { list.innerHTML = '<span style="color:#64748b;font-size:.85rem">Erreur chargement</span>'; }
+}
+
 // ── mount / unmount ───────────────────────────────────────────
 let _root = null;
 
@@ -512,13 +762,17 @@ export async function mount(container) {
     return;
   }
 
-  container.innerHTML = _buildHTML();
+  container.innerHTML = await _buildHTML();
   _root = container;
   _bindEvents(container);
+  _bindAuthEvents(container);
 
   // Show models count
   const countEl = container.querySelector('#models-count');
   if (countEl) countEl.textContent = `${_models.length} modèle(s) disponible(s)`;
+
+  // Load own devices in auth panel
+  _loadMyDevices(container);
 }
 
 export function unmount() {

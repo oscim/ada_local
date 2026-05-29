@@ -29,14 +29,62 @@ _REOLINK_SSL.set_ciphers("DEFAULT:@SECLEVEL=0")
 _REOLINK_SSL.check_hostname = False
 _REOLINK_SSL.verify_mode = _ssl.CERT_NONE
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi.responses import JSONResponse as _JSONResponse
+from starlette.types import ASGIApp as _ASGIApp
+
 from core.memory_store import memory_store
 from core.runtime_state import runtime_state
 from core.skill_manager import skill_manager
 from core.settings_store import settings
 from web.pipeline import process_message
+from web.router_auth import router as _auth_router
+
+# ---------------------------------------------------------------------------
+# Routes toujours publiques (même quand l'auth est activée)
+# ---------------------------------------------------------------------------
+_PUBLIC_PREFIXES = (
+    "/api/auth/",
+    "/static/",
+)
+_PUBLIC_EXACT = {
+    "/",
+    "/manifest.json",
+    "/sw.js",
+    "/api/status",   # status dot visible avant auth
+}
+
+
+class _AuthMiddleware(BaseHTTPMiddleware):
+    """Middleware JWT — actif uniquement quand auth.enabled=True."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not settings.get("auth.enabled", False):
+            return await call_next(request)
+
+        path = request.url.path
+        if path in _PUBLIC_EXACT:
+            return await call_next(request)
+        for prefix in _PUBLIC_PREFIXES:
+            if path.startswith(prefix):
+                return await call_next(request)
+
+        # Vérification du JWT
+        from web.auth import extract_token, verify_jwt
+        token = extract_token(request)
+        if token and verify_jwt(token):
+            return await call_next(request)
+
+        if path.startswith("/api/"):
+            return _JSONResponse({"detail": "Non authentifié"}, status_code=401)
+        # Page HTML → retourner quand même (le frontend affiche la vue auth)
+        return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
+app.add_middleware(_AuthMiddleware)
+app.include_router(_auth_router)
 
 _STATIC = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
@@ -46,6 +94,10 @@ app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
 async def _startup() -> None:
     # Ensure semantic memory DB is available for web chat sessions.
     memory_store.initialize()
+    # Initialise la DB auth si l'auth est activée.
+    if settings.get("auth.enabled", False):
+        from web.auth_db import initialize as _auth_db_init
+        _auth_db_init()
 
 
 # ---------------------------------------------------------------------------

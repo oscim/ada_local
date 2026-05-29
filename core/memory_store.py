@@ -132,8 +132,9 @@ class MemoryStore:
         if len(words) < _MIN_WORDS_TO_SEARCH:
             return []
 
-        # Join as FTS5 query (plain terms, no operators)
-        fts_terms = " ".join(words)
+        # Join as FTS5 OR query so ANY matching term returns results
+        # (default AND would require all terms to co-occur in one short message)
+        fts_terms = " OR ".join(words)
         if not fts_terms:
             return []
 
@@ -252,38 +253,27 @@ class MemoryStore:
     # ── Injection helper ──────────────────────────────────────────────────────
 
     def build_context(self, query: str, current_session_id: Optional[str] = None,
-                      limit: int = 4) -> str:
+                      limit: int = 3) -> str:
         """
-        Build context block: consolidated summaries first, then raw BM25 matches.
+        Build context block from raw BM25 matches of past sessions.
+        Consolidated summaries are intentionally excluded: they are too broad
+        and the LLM over-weights them, ignoring the current conversation.
         Returns empty string if nothing relevant found.
         """
-        parts: list[str] = []
-
-        # Recent consolidated summaries (last 3 days)
-        consolidated = self.get_consolidated(days=3)
-        if consolidated:
-            lines = ["[RÉSUMÉS CONSOLIDÉS — mémoire longue terme]"]
-            for c in consolidated[:2]:
-                facts_preview = " · ".join(c["facts"][:3]) if c["facts"] else ""
-                lines.append(f"• {c['date']} : {c['summary'][:200]}")
-                if facts_preview:
-                    lines.append(f"  Faits clés : {facts_preview}")
-            parts.append("\n".join(lines))
-
-        # Raw BM25 search
+        # Raw BM25 search (OR semantics — any matching term, past sessions only)
         results = self.search(query, limit=limit, exclude_session=current_session_id)
-        if results:
-            lines = ["[SOUVENIRS PERTINENTS — conversations passées]"]
-            for r in results:
-                date = datetime.fromtimestamp(r["timestamp"]).strftime("%d/%m %H:%M")
-                role_label = "Toi" if r["role"] == "user" else "ADA"
-                snippet = r["content"][:180].replace("\n", " ")
-                if len(r["content"]) > 180:
-                    snippet += "…"
-                lines.append(f"• [{date}] {role_label} : {snippet}")
-            parts.append("\n".join(lines))
+        if not results:
+            return ""
 
-        return "\n\n".join(parts)
+        lines = ["[SOUVENIRS DE CONVERSATIONS PASSÉES — contexte de fond, la conversation ci-dessous a la priorité absolue]"]
+        for r in results:
+            date = datetime.fromtimestamp(r["timestamp"]).strftime("%d/%m %H:%M")
+            role_label = "Toi" if r["role"] == "user" else "ADA"
+            snippet = r["content"][:180].replace("\n", " ")
+            if len(r["content"]) > 180:
+                snippet += "…"
+            lines.append(f"• [{date}] {role_label} : {snippet}")
+        return "\n".join(lines)
 
 
 # Global singleton — call memory_store.initialize() once at startup

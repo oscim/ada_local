@@ -16,6 +16,7 @@ const VIEW_LOADERS = {
   cameras:   () => import('/static/views/cameras/index.js'),
   marketing: () => import('/static/views/marketing/index.js'),
   settings:  () => import('/static/views/settings/index.js'),
+  auth:      () => import('/static/views/auth/index.js'),
 };
 
 const VIEW_TITLES = {
@@ -28,11 +29,25 @@ const VIEW_TITLES = {
   cameras:   'Caméras',
   marketing: 'Marketing',
   settings:  'Paramètres',
+  auth:      'Connexion',
 };
 
 // ── État global ─────────────────────────────────────────────────
 export let currentView = '';
 let _currentMod = null;
+
+// ── Gestion du token d'authentification ─────────────────────────
+export function getToken() { return localStorage.getItem('ada_token'); }
+
+export function setToken(token) {
+  localStorage.setItem('ada_token', token);
+  document.cookie = `ada_token=${token}; path=/; SameSite=Strict; Max-Age=${30 * 86_400}`;
+}
+
+export function clearToken() {
+  localStorage.removeItem('ada_token');
+  document.cookie = 'ada_token=; path=/; SameSite=Strict; Max-Age=0';
+}
 
 // ── DOM ─────────────────────────────────────────────────────────
 const sidebar        = document.getElementById('sidebar');
@@ -110,8 +125,18 @@ export function applyModuleVisibility(modules = {}) {
   }
 }
 
-export async function fetchJSON(url) {
-  const r = await fetch(url);
+export async function fetchJSON(url, options = {}) {
+  const token = getToken();
+  const headers = {
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...(options.headers || {}),
+  };
+  const r = await fetch(url, { ...options, headers });
+  if (r.status === 401) {
+    clearToken();
+    switchView('auth');
+    throw new Error('Non authentifié');
+  }
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
@@ -248,11 +273,135 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
-// ── Démarrage ───────────────────────────────────────────────────
-// Appliquer la visibilité des modules selon les settings sauvegardés
-fetch('/api/settings')
-  .then(r => r.json())
-  .then(cfg => applyModuleVisibility(cfg.modules || {}))
-  .catch(() => {}); // silencieux si serveur pas encore prêt
+// ── Auth — permissions nav ───────────────────────────────────────
+// Mapping nav-item → menu_tag
+function _navItemTag(item) {
+  const view = item.dataset.view;
+  const page = item.dataset.page;
+  if (page) return page;  // home, cad, printers, skills, senses, music, library, infrastructure
+  return view;            // dashboard, chat, memory, planner, briefing, webagent, cameras, marketing, settings, auth
+}
 
-switchView('dashboard');
+export function applyPermissions(accessibleTags) {
+  if (!accessibleTags) return;
+  navItems.forEach(item => {
+    const tag = _navItemTag(item);
+    item.style.display = accessibleTags.includes(tag) ? '' : 'none';
+  });
+}
+
+// ── Auth — gate de démarrage ─────────────────────────────────────
+async function _authGate() {
+  try {
+    const cfg = await fetch('/api/auth/config').then(r => r.json());
+    if (!cfg.enabled) return; // auth désactivée → tout accès autorisé
+
+    const token = getToken();
+    if (!token) { await switchView('auth'); return; }
+
+    const r = await fetch('/api/auth/me', {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+
+    if (r.status === 401) {
+      clearToken();
+      await switchView('auth');
+      return;
+    }
+
+    if (r.ok) {
+      const me = await r.json();
+      applyPermissions(me.accessible_tags);
+      // Synchronise aussi le cookie pour les requêtes sans header
+      document.cookie = `ada_token=${token}; path=/; SameSite=Strict; Max-Age=${30 * 86_400}`;
+      // Afficher le bouton logout dans le menu admin
+      const logoutBtn = document.getElementById('admin-logout');
+      if (logoutBtn) logoutBtn.style.display = '';
+    }
+  } catch { /* erreur réseau → ne pas bloquer l'app */ }
+}
+
+// ── Auth — confirmation QR (appareil authentifié scanne le QR) ──
+async function _handleQRConfirm(code) {
+  const token = getToken();
+  if (!token) return; // non connecté → ne peut pas confirmer
+
+  const modal = document.createElement('div');
+  modal.id = 'qr-confirm-modal';
+  modal.style.cssText = [
+    'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7)',
+    'display:flex;align-items:center;justify-content:center;padding:1.5rem',
+  ].join(';');
+  modal.innerHTML = `
+    <div style="background:#1e2330;border-radius:16px;padding:2rem;max-width:360px;width:100%;
+                border:1px solid rgba(123,104,238,.3)">
+      <h2 style="color:#c7d2fe;margin:0 0 .5rem;font-size:1.1rem">Nouveau appareil</h2>
+      <p style="color:#94a3b8;font-size:.9rem;margin:0 0 1.25rem">
+        Un nouvel appareil demande à accéder à ADA.<br>
+        Voulez-vous l'autoriser ?
+      </p>
+      <div style="display:flex;gap:.75rem">
+        <button id="qrc-cancel" style="flex:1;padding:.6rem;border:1px solid #374151;border-radius:8px;
+                background:transparent;color:#94a3b8;cursor:pointer">Refuser</button>
+        <button id="qrc-confirm" style="flex:1;padding:.6rem;border:none;border-radius:8px;
+                background:#7b68ee;color:#fff;cursor:pointer">Autoriser</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // Clean URL
+  history.replaceState({}, '', window.location.pathname);
+
+  document.getElementById('qrc-cancel').onclick = () => modal.remove();
+  document.getElementById('qrc-confirm').onclick = async () => {
+    const btn = document.getElementById('qrc-confirm');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/api/auth/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ code }),
+      });
+      const data = await r.json();
+      if (r.ok) {
+        showToast('✅ ' + (data.message || 'Appareil autorisé'));
+      } else {
+        showToast('Erreur : ' + (data.detail || 'Code invalide'));
+      }
+    } catch { showToast('Erreur réseau'); }
+    modal.remove();
+  };
+}
+
+// ── Logout ───────────────────────────────────────────────────────
+document.getElementById('admin-logout')?.addEventListener('click', async () => {
+  adminMenu.classList.add('hidden');
+  await fetch('/api/auth/logout', { method: 'POST' });
+  clearToken();
+  location.reload();
+});
+
+// ── Démarrage ────────────────────────────────────────────────────
+(async () => {
+  // 1. Vérifier si un QR de confirmation est dans l'URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const confirmCode = urlParams.get('confirm');
+
+  // 2. Auth gate
+  await _authGate();
+
+  // 3. Si la vue auth a été montée → s'arrêter
+  if (currentView === 'auth') return;
+
+  // 4. Visibilité des modules (settings)
+  try {
+    const cfg = await fetch('/api/settings').then(r => r.json());
+    applyModuleVisibility(cfg.modules || {});
+  } catch {}
+
+  // 5. Vue initiale
+  switchView('dashboard');
+
+  // 6. Confirmation QR (si présente dans l'URL, APRÈS être authentifié)
+  if (confirmCode) _handleQRConfirm(confirmCode);
+})();
