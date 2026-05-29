@@ -104,6 +104,12 @@ DEFAULT_SETTINGS = {
         "username": "",
         "password": "",
     },
+    "modules": {
+        "domotique": True,
+        "print3d": True,
+        "music": True,
+        "bibliotheque": True,
+    },
 }
 
 

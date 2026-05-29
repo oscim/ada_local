@@ -10,18 +10,24 @@ const VIEW_LOADERS = {
   chat:      () => import('/static/views/chat/index.js'),
   memory:    () => import('/static/views/memory/index.js'),
   page:      () => import('/static/views/page/index.js'),
+  planner:   () => import('/static/views/planner/index.js'),
+  briefing:  () => import('/static/views/briefing/index.js'),
   webagent:  () => import('/static/views/webagent/index.js'),
   cameras:   () => import('/static/views/cameras/index.js'),
   marketing: () => import('/static/views/marketing/index.js'),
+  settings:  () => import('/static/views/settings/index.js'),
 };
 
 const VIEW_TITLES = {
   dashboard: 'Tableau de bord',
   chat:      'Discussion',
   memory:    'Mémoire',
+  planner:   'Planificateur',
+  briefing:  'Briefing',
   webagent:  'Agent Web',
   cameras:   'Caméras',
   marketing: 'Marketing',
+  settings:  'Paramètres',
 };
 
 // ── État global ─────────────────────────────────────────────────
@@ -85,6 +91,23 @@ export function escapeHtml(text = '') {
   return String(text)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ── Visibilité des modules nav (domotique / print3d / music) ────
+export function applyModuleVisibility(modules = {}) {
+  const map = {
+    domotique: ['[data-page="home"]', '[data-view="cameras"]'],
+    print3d:   ['[data-page="printers"]', '[data-page="cad"]'],
+    music:     ['[data-page="music"]', '[data-page="library"]'],
+  };
+  for (const [mod, selectors] of Object.entries(map)) {
+    const visible = modules[mod] !== false;
+    selectors.forEach(sel => {
+      document.querySelectorAll(sel).forEach(el => {
+        el.style.display = visible ? '' : 'none';
+      });
+    });
+  }
 }
 
 export async function fetchJSON(url) {
@@ -226,4 +249,10 @@ if ('serviceWorker' in navigator) {
 }
 
 // ── Démarrage ───────────────────────────────────────────────────
+// Appliquer la visibilité des modules selon les settings sauvegardés
+fetch('/api/settings')
+  .then(r => r.json())
+  .then(cfg => applyModuleVisibility(cfg.modules || {}))
+  .catch(() => {}); // silencieux si serveur pas encore prêt
+
 switchView('dashboard');

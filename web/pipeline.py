@@ -64,7 +64,14 @@ _INFRA_TRIGGERS = frozenset(
     }
 )
 
-# ---------------------------------------------------------------------------
+# Regex de routing déterministe pour la création de timers
+# "mets/ajoute/lance un timer de 10 minutes pour les pâtes", "lance un timer 30s"
+_TIMER_RE = re.compile(
+    r"(?:mets?|ajoute[rz]?|pose|lance[rz]?|démarre[rz]?|demarre[rz]?|start|set|crée[rz]?|créer|créé|programme[rz]?)"
+    r"\s+(?:un\s+|une?\s+)?timer(?:\s+de|\s+for)?\s+(.+)",
+    re.IGNORECASE,
+)
+
 # Regex de commande de contrôle domotique
 _CONTROL_RE = re.compile(
     r"^(?P<action>allume|allumer|éteins|éteint|eteins|eteint|éteindre|eteindre"
@@ -420,16 +427,12 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
 
 
 def _system_prompt() -> str:
-    try:
-        from core.i18n import ai_lang_instruction
-
-        lang_instr = ai_lang_instruction()
-    except Exception:
-        lang_instr = "Réponds en français. Sois concis et précis."
     return (
         "Tu es ADA, une assistante IA locale. "
-        f"{lang_instr} "
-        "Tu es accessible via l'interface web mobile — sois utile, précise et naturelle."
+        "Réponds TOUJOURS en français. "
+        "RÈGLE ABSOLUE : réponses courtes, 1 à 3 phrases max. "
+        "Pas d'intro, pas de conclusion, pas de présentation de toi-même. "
+        "Va directement à la réponse."
     )
 
 
@@ -685,6 +688,39 @@ async def process_message(
             else:
                 response = f"❌ Impossible de contrôler **{entity.name}**. Vérifiez la connexion au provider ({entity.provider})."
 
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", response)
+        yield response
+        return
+
+    # Routing déterministe pour les timers (avant LLM — le LLM ignore souvent les phrases françaises)
+    m_timer = _TIMER_RE.search(user_text)
+    if m_timer:
+        raw = m_timer.group(1).strip()
+        # Cas 1 : "10 minutes pour les pâtes" → dur="10 minutes", label="les pâtes"
+        m_pour = re.search(r"\bpour\s+(.+)$", raw, re.IGNORECASE)
+        # Cas 2 : "test2 de 2 min" → label="test2", dur="2 min"
+        m_label_de = re.match(r"^([A-Za-zÀ-ÿ][^\s]*(?:\s+[A-Za-zÀ-ÿ][^\s]*)?)\s+de\s+(.+)$", raw, re.IGNORECASE)
+        if m_pour:
+            duration_str = raw[: m_pour.start()].strip()
+            label = m_pour.group(1).strip()
+        elif m_label_de and not re.match(r'^\d', m_label_de.group(1)):
+            label = m_label_de.group(1).strip()
+            duration_str = m_label_de.group(2).strip()
+        else:
+            duration_str = raw
+            label = "Timer"
+        if not duration_str:
+            duration_str = raw
+            label = "Timer"
+        result = function_executor.execute("set_timer", {"duration": duration_str, "label": label})
+        if result.get("success"):
+            response = f"⏱️ Timer **{label}** lancé pour {duration_str}. Visible dans le Planificateur."
+        else:
+            response = (
+                f"❌ Durée non reconnue : `{duration_str}`. "
+                "Essayez `10 minutes`, `1h30`, `30 secondes`, etc."
+            )
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", response)
         yield response

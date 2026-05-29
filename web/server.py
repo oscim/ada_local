@@ -14,6 +14,8 @@ from pathlib import Path
 # Assurer que la racine du projet est dans sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -186,6 +188,218 @@ async def dashboard():
     }
 
 
+def _wmo_desc(code: int) -> str:
+    """Convertit un code WMO en description météo française."""
+    if code == 0:   return "Ciel dégagé"
+    if code <= 2:   return "Partiellement nuageux"
+    if code <= 3:   return "Nuageux"
+    if code <= 48:  return "Brouillard"
+    if code <= 55:  return "Bruine"
+    if code <= 67:  return "Pluie"
+    if code <= 77:  return "Neige"
+    if code <= 82:  return "Averses"
+    return "Orage"
+
+
+@app.get("/api/dashboard/home")
+async def dashboard_home():
+    """Données enrichies pour la vue accueil : météo, tâches, appareils, news."""
+    import asyncio
+
+    user_name = settings.get("user.name", "User")
+    lat = settings.get("weather.latitude", 48.8566)
+    lon = settings.get("weather.longitude", 2.3522)
+    city = settings.get("weather.city", "Paris")
+
+    # --- Météo OpenMeteo (gratuit, sans clé) ---
+    weather_data: dict = {"temp": None, "unit": "°C", "desc": "—", "code": 0, "city": city}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(
+                f"https://api.open-meteo.com/v1/forecast"
+                f"?latitude={lat}&longitude={lon}"
+                f"&current=temperature_2m,weathercode"
+            )
+            if r.status_code == 200:
+                cur = r.json().get("current", {})
+                code = int(cur.get("weathercode", 0))
+                temp = cur.get("temperature_2m")
+                weather_data.update({
+                    "temp": round(temp) if temp is not None else None,
+                    "code": code,
+                    "desc": _wmo_desc(code),
+                })
+    except Exception:
+        pass
+
+    # --- Tâches ---
+    tasks_data: dict = {"pending": 0, "next": None}
+    try:
+        from core.tasks import TaskManager
+        tm = TaskManager()
+        all_tasks = tm.get_tasks()
+        pending = [t for t in all_tasks if not t.get("completed")]
+        tasks_data = {"pending": len(pending), "next": pending[0]["text"] if pending else None}
+    except Exception:
+        pass
+
+    # --- Derniers capteurs Domoticz modifiés ---
+    active_devices = 0
+    kasa_status = "Domoticz non configuré"
+    recent_devices: list = []
+    try:
+        domo_url = settings.get("domoticz.url", "").rstrip("/")
+        domo_user = settings.get("domoticz.username", "")
+        domo_pass = settings.get("domoticz.password", "")
+        if domo_url:
+            auth = (domo_user, domo_pass) if domo_user else None
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                r = await client.get(
+                    f"{domo_url}/json.htm",
+                    params={"type": "devices", "filter": "all", "used": "true", "order": "LastUpdate"},
+                    auth=auth,
+                )
+                if r.status_code == 200:
+                    devs = r.json().get("result", [])
+                    active_devices = len(devs)
+                    kasa_status = f"{active_devices} appareil(s) Domoticz"
+                    recent_devices = [
+                        {
+                            "name": d.get("Name", "?"),
+                            "value": d.get("Data", d.get("Status", "?")),
+                            "last_update": d.get("LastUpdate", "")[:16],
+                        }
+                        for d in devs[:4]
+                    ]
+    except Exception:
+        pass
+
+    # --- Dernière news (titre seulement, depuis cache ou RSS rapide) ---
+    latest_news: dict | None = None
+    news_count = 0
+    try:
+        import feedparser
+        feed = feedparser.parse("https://www.lemonde.fr/rss/une.xml")
+        entries = feed.entries
+        news_count = len(entries)
+        if entries:
+            latest_news = {
+                "title": entries[0].get("title", ""),
+                "source": feed.feed.get("title", "Le Monde"),
+            }
+    except Exception:
+        pass
+
+    return {
+        "user_name": user_name,
+        "weather": weather_data,
+        "tasks": tasks_data,
+        "active_devices": active_devices,
+        "kasa_status": kasa_status,
+        "news_count": news_count,
+        "latest_news": latest_news,
+        "recent_devices": recent_devices,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Planificateur — Tâches, Alarmes, Timers
+# ---------------------------------------------------------------------------
+from core.tasks import task_manager as _tm
+
+class _TaskBody(BaseModel):
+    text: str
+
+class _TaskToggle(BaseModel):
+    completed: bool
+
+class _AlarmBody(BaseModel):
+    time: str
+    label: str = ""
+
+class _TimerBody(BaseModel):
+    label: str
+    duration: str  # ex: "10 minutes", "1 hour 30 minutes"
+
+@app.get("/api/tasks")
+async def tasks_list():
+    return _tm.get_tasks()
+
+@app.post("/api/tasks")
+async def tasks_add(body: _TaskBody):
+    t = _tm.add_task(body.text)
+    if t:
+        return t
+    from fastapi import HTTPException
+    raise HTTPException(500, "Erreur création tâche")
+
+@app.patch("/api/tasks/{task_id}")
+async def tasks_toggle(task_id: str, body: _TaskToggle):
+    _tm.toggle_task(task_id, body.completed)
+    return {"ok": True}
+
+@app.delete("/api/tasks/{task_id}")
+async def tasks_delete(task_id: str):
+    _tm.delete_task(task_id)
+    return {"ok": True}
+
+@app.get("/api/planner/alarms")
+async def alarms_list():
+    return _tm.get_alarms()
+
+@app.post("/api/planner/alarms")
+async def alarms_add(body: _AlarmBody):
+    alarm_id = _tm.add_alarm(body.time, body.label)
+    if alarm_id:
+        return {"id": alarm_id, "time": body.time, "label": body.label}
+    from fastapi import HTTPException
+    raise HTTPException(500, "Erreur création alarme")
+
+@app.delete("/api/planner/alarms/{alarm_id}")
+async def alarms_delete(alarm_id: str):
+    _tm.delete_alarm(alarm_id)
+    return {"ok": True}
+
+@app.get("/api/planner/timers")
+async def timers_list():
+    try:
+        from core.function_executor import executor as _exec
+        result = []
+        with _exec._timer_lock:
+            for label, t in list(_exec.active_timers.items()):
+                result.append({
+                    "label": label,
+                    "duration_seconds": t.duration_seconds,
+                    "remaining_seconds": t.remaining_seconds,
+                    "is_expired": t.is_expired,
+                    "start_time": t.start_time,
+                })
+        return result
+    except Exception:
+        return []
+
+@app.post("/api/planner/timers")
+async def timers_add(body: _TimerBody):
+    from fastapi import HTTPException
+    try:
+        from core.function_executor import executor as _exec
+        result = _exec.execute("set_timer", {"duration": body.duration, "label": body.label})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message", "Durée invalide"))
+    return {"ok": True, "message": result["message"]}
+
+@app.delete("/api/planner/timers/{label}")
+async def timers_delete(label: str):
+    try:
+        from core.function_executor import executor as _exec
+        with _exec._timer_lock:
+            _exec.active_timers.pop(label, None)
+        return {"ok": True}
+    except Exception:
+        return {"ok": True}
+
 # ---------------------------------------------------------------------------
 # Mémoire sémantique
 # ---------------------------------------------------------------------------
@@ -202,6 +416,92 @@ async def memory_recent(limit: int = 50):
     for m in items:
         m["ts_fmt"] = datetime.fromtimestamp(m["timestamp"]).strftime("%d/%m %H:%M")
     return items
+
+
+# ---------------------------------------------------------------------------
+# Briefing — sources RSS configurables + mots-clés
+# ---------------------------------------------------------------------------
+_BRIEFING_DEFAULT_SOURCES = [
+    {"url": "https://news.google.com/rss?hl=fr&gl=FR&ceid=FR:fr",                          "name": "Top Stories",  "category": "Top Stories"},
+    {"url": "https://news.google.com/rss/search?q=technology&hl=fr&gl=FR&ceid=FR:fr",      "name": "Technology",   "category": "Technology"},
+    {"url": "https://news.google.com/rss/search?q=science&hl=fr&gl=FR&ceid=FR:fr",         "name": "Science",      "category": "Science"},
+    {"url": "https://news.google.com/rss/search?q=marchés+bourse&hl=fr&gl=FR&ceid=FR:fr",  "name": "Markets",      "category": "Markets"},
+    {"url": "https://news.google.com/rss/search?q=culture+cinéma&hl=fr&gl=FR&ceid=FR:fr",  "name": "Culture",      "category": "Culture"},
+]
+_briefing_cache: dict = {}   # {cache_key: {"ts": float, "data": list}}
+_BRIEFING_TTL = 900          # 15 min
+
+def _briefing_fetch(sources: list, keywords: list[str]) -> list:
+    """Lit les flux RSS et filtre par mots-clés (léger, sans IA)."""
+    import time, feedparser as _fp
+    articles = []
+    seen: set = set()
+    kw_low = [k.lower() for k in keywords if k.strip()]
+    for src in sources:
+        try:
+            feed = _fp.parse(src["url"])
+            for entry in feed.entries[:10]:
+                title = entry.get("title", "").strip()
+                if not title or title in seen:
+                    continue
+                summary = entry.get("summary", "")
+                # Filtre mots-clés
+                if kw_low:
+                    haystack = (title + " " + summary).lower()
+                    if not any(k in haystack for k in kw_low):
+                        continue
+                seen.add(title)
+                # Nom de source précis (Google News encapsule la source réelle)
+                src_name = src["name"]
+                if hasattr(entry, "source") and hasattr(entry.source, "title"):
+                    src_name = entry.source.title
+                articles.append({
+                    "title":    title,
+                    "source":   src_name,
+                    "date":     entry.get("published", ""),
+                    "url":      entry.get("link", ""),
+                    "category": src.get("category", "Général"),
+                    "image":    "",
+                })
+        except Exception:
+            pass
+    return articles
+
+
+@app.get("/api/briefing/feed")
+async def briefing_feed(refresh: bool = False):
+    import time, asyncio
+    sources  = settings.get("briefing.sources",  None) or _BRIEFING_DEFAULT_SOURCES
+    keywords = settings.get("briefing.keywords", [])
+    cache_key = "feed"
+    cached = _briefing_cache.get(cache_key)
+    if not refresh and cached and (time.time() - cached["ts"]) < _BRIEFING_TTL:
+        return cached["data"]
+    loop = asyncio.get_event_loop()
+    articles = await loop.run_in_executor(None, _briefing_fetch, sources, keywords)
+    _briefing_cache[cache_key] = {"ts": time.time(), "data": articles}
+    return articles
+
+
+@app.get("/api/briefing/config")
+async def briefing_config():
+    return {
+        "sources":  settings.get("briefing.sources",  None) or _BRIEFING_DEFAULT_SOURCES,
+        "keywords": settings.get("briefing.keywords", []),
+    }
+
+
+class _BriefingConfigBody(BaseModel):
+    sources:  list | None = None
+    keywords: list | None = None
+
+
+@app.put("/api/briefing/config")
+async def briefing_save_config(body: _BriefingConfigBody):
+    if body.sources  is not None: settings.set("briefing.sources",  body.sources)
+    if body.keywords is not None: settings.set("briefing.keywords", body.keywords)
+    _briefing_cache.clear()   # invalide le cache
+    return {"ok": True}
 
 
 @app.get("/api/memory/consolidated")
@@ -347,6 +647,47 @@ async def page_infrastructure():
 class EndpointRequest(BaseModel):
     name: str
     url: str
+
+
+# ---------------------------------------------------------------------------
+# Paramètres ADA — CRUD complet
+# ---------------------------------------------------------------------------
+
+class SettingUpdate(BaseModel):
+    key: str
+    value: Any
+
+
+@app.get("/api/settings")
+async def get_settings_api():
+    """Renvoie tous les paramètres courants."""
+    from core.settings_store import settings as _s
+    return _s._settings
+
+
+@app.post("/api/settings")
+async def update_setting(req: SettingUpdate):
+    """Met à jour un paramètre par chemin pointé (ex: 'home_assistant.url')."""
+    from core.settings_store import settings as _s
+    _s.set(req.key, req.value)
+    return {"ok": True}
+
+
+@app.get("/api/ollama/models")
+async def get_ollama_models():
+    """Renvoie la liste des modèles Ollama installés."""
+    from core.settings_store import settings as _s
+    base = _s.get("ollama_url", "http://localhost:11434").rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.get(f"{base}/api/tags")
+            if r.status_code == 200:
+                return [m["name"] for m in r.json().get("models", [])]
+    except Exception:
+        pass
+    return []
 
 
 @app.get("/api/infra/endpoints")

@@ -403,11 +403,14 @@ class FunctionExecutor:
         total_seconds = 0
         
         import re
+        # Normalise "1h30" → "1h 30m" et "1h30m" → "1h 30m"
+        duration_str = re.sub(r'(\d+)h(\d+)(?:m(?:in)?)?(?:\b|$)', r'\1h \2m', duration_str)
+
         # Match patterns like "10 minutes", "1 hour", "30 seconds"
         patterns = [
-            (r'(\d+)\s*h(?:our)?s?', 3600),
-            (r'(\d+)\s*m(?:in(?:ute)?s?)?', 60),
-            (r'(\d+)\s*s(?:ec(?:ond)?s?)?', 1),
+            (r'(\d+)\s*h(?:eure?s?|our)?s?', 3600),
+            (r'(\d+)\s*m(?:in(?:ute)?s?|n)?', 60),
+            (r'(\d+)\s*s(?:ec(?:onde?)?s?)?', 1),
         ]
         
         for pattern, multiplier in patterns:
