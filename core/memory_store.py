@@ -117,10 +117,12 @@ class MemoryStore:
     # ── Read ──────────────────────────────────────────────────────────────────
 
     def search(self, query: str, limit: int = 5,
-               exclude_session: Optional[str] = None) -> List[dict]:
+               exclude_session: Optional[str] = None,
+               min_words: int = _MIN_WORDS_TO_SEARCH) -> List[dict]:
         """
         BM25 full-text search via FTS5. Returns matching memories ordered by
-        relevance. Skips short queries (greetings, single words).
+        relevance. Skips short queries (greetings, single words) unless
+        min_words=1 is passed (e.g. for explicit UI searches).
         """
         if not self._db:
             return []
@@ -129,7 +131,7 @@ class MemoryStore:
         import re as _re
         clean = _re.sub(r"[^\w\s]", " ", query.lower())
         words = [w for w in clean.split() if len(w) > 2]
-        if len(words) < _MIN_WORDS_TO_SEARCH:
+        if len(words) < min_words:
             return []
 
         # Join as FTS5 OR query so ANY matching term returns results

@@ -569,7 +569,7 @@ class MemorySearchRequest(BaseModel):
 async def memory_search(req: MemorySearchRequest):
     from datetime import datetime
     if req.query.strip():
-        items = memory_store.search(req.query, limit=50)
+        items = memory_store.search(req.query, limit=50, min_words=1)
     else:
         items = memory_store.recent(limit=50)
     for m in items:

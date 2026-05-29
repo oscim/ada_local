@@ -743,7 +743,18 @@ async def process_message(
     messages = skill_manager.inject(messages, user_text)
     mem = memory_store.build_context(user_text, current_session_id=session_id)
     if mem:
-        messages.insert(1, {"role": "system", "content": mem})
+        # Injecter la mémoire comme échange user/assistant fictif en début d'historique.
+        # Cela lui donne le poids d'une conversation passée ordinaire, et NON d'une
+        # instruction système — les LLMs locaux sur-pondèrent fortement les system messages.
+        # La conversation courante (après) reste donc prioritaire.
+        messages.insert(1, {
+            "role": "assistant",
+            "content": "Compris, je prends note de ces informations comme contexte de fond.",
+        })
+        messages.insert(1, {
+            "role": "user",
+            "content": f"[Rappel de contexte — conversations passées, priorité inférieure à la conversation qui suit]\n{mem}",
+        })
 
     messages.append({"role": "user", "content": user_text})
 
