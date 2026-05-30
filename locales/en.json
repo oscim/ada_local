@@ -130,7 +130,8 @@
     "library": "Library",
     "infrastructure": "Infrastructure",
     "marketing": "Marketing",
-    "settings": "Settings"
+    "settings": "Settings",
+    "societes": "Companies"
   },
   "music": {
     "default_player": "Default player",

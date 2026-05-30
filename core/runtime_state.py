@@ -26,25 +26,46 @@ def _load_custom_endpoints() -> list[dict]:
     """Charge les endpoints personnalisés depuis config/custom_endpoints.json."""
     try:
         if _CUSTOM_EP_FILE.exists():
-            return json.loads(_CUSTOM_EP_FILE.read_text(encoding="utf-8"))
+            eps = json.loads(_CUSTOM_EP_FILE.read_text(encoding="utf-8"))
+            for ep in eps:
+                ep.setdefault("tags", ["local"])
+            return eps
     except Exception:
         pass
     return []
 
 
-def add_custom_endpoint(name: str, url: str) -> None:
+def add_custom_endpoint(name: str, url: str, tags: list[str] | None = None) -> None:
     """Ajoute ou met à jour un endpoint personnalisé."""
     eps = _load_custom_endpoints()
+    default_tags = tags if tags is not None else ["local"]
     for ep in eps:
         if ep["name"] == name:
             ep["url"] = url
+            if tags is not None:
+                ep["tags"] = tags
+            elif "tags" not in ep:
+                ep["tags"] = ["local"]
             break
     else:
-        eps.append({"name": name, "url": url})
+        eps.append({"name": name, "url": url, "tags": default_tags})
     _CUSTOM_EP_FILE.parent.mkdir(parents=True, exist_ok=True)
     _CUSTOM_EP_FILE.write_text(
         json.dumps(eps, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+
+
+def update_endpoint_tags(name: str, tags: list[str]) -> bool:
+    """Met à jour les tags d'un endpoint. Retourne True si trouvé."""
+    eps = _load_custom_endpoints()
+    for ep in eps:
+        if ep["name"] == name:
+            ep["tags"] = tags
+            _CUSTOM_EP_FILE.write_text(
+                json.dumps(eps, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            return True
+    return False
 
 
 def remove_custom_endpoint(name: str) -> bool:
@@ -56,6 +77,45 @@ def remove_custom_endpoint(name: str) -> bool:
     _CUSTOM_EP_FILE.write_text(
         json.dumps(new_eps, indent=2, ensure_ascii=False), encoding="utf-8"
     )
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Built-in service overrides — hidden flag + tags per service
+# ---------------------------------------------------------------------------
+_SERVICE_OVERRIDES_FILE = Path(__file__).parent.parent / "config" / "service_overrides.json"
+
+_BUILTIN_SERVICES = ["ollama", "n8n", "home_assistant", "navidrome", "domoticz"]
+
+
+def _load_service_overrides() -> dict:
+    """Charge les overrides (hidden, tags) des services built-in."""
+    try:
+        if _SERVICE_OVERRIDES_FILE.exists():
+            return json.loads(_SERVICE_OVERRIDES_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_service_overrides(overrides: dict) -> None:
+    _SERVICE_OVERRIDES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _SERVICE_OVERRIDES_FILE.write_text(
+        json.dumps(overrides, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def update_service_hidden(name: str, hidden: bool) -> bool:
+    overrides = _load_service_overrides()
+    overrides.setdefault(name, {})["hidden"] = hidden
+    _save_service_overrides(overrides)
+    return True
+
+
+def update_service_tags(name: str, tags: list) -> bool:
+    overrides = _load_service_overrides()
+    overrides.setdefault(name, {})["tags"] = tags
+    _save_service_overrides(overrides)
     return True
 
 
@@ -264,10 +324,12 @@ class RuntimeStateManager:
             "updated_at": s.get("updated_at", ""),
         }
 
-    def format_infra_status_fr(self) -> str:
-        """Formate un résumé lisible en français. Ne lève jamais."""
+    def format_infra_status_fr(self, filter_tag: str | None = None) -> str:
+        """Formate un résumé lisible en français. Ne lève jamais.
+        Si filter_tag est fourni (ex: 'opentechno'), seuls les services
+        taggés avec ce tag sont affichés."""
         try:
-            return self._format()
+            return self._format(filter_tag=filter_tag)
         except Exception as e:
             return f"⚠️ Impossible de récupérer l'état infra : {e}"
 
@@ -333,9 +395,34 @@ class RuntimeStateManager:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _format(self) -> str:
+    def _format(self, filter_tag: str | None = None) -> str:
         s = self._state
-        icons  = {"online": "🟢", "offline": "🔴", "unknown": "🟡"}
+        icons     = {"online": "🟢", "offline": "🔴", "unknown": "🟡"}
+        status_fr = {"online": "en ligne", "offline": "hors ligne", "unknown": "statut non vérifié"}
+        custom_eps = _load_custom_endpoints()
+
+        # ── Mode filtré par tag société ────────────────────────────────────────
+        if filter_tag and filter_tag not in ("local", "Tout"):
+            overrides = _load_service_overrides()
+            _BUILTIN = ["ollama", "n8n", "home_assistant", "navidrome", "domoticz"]
+            _LABELS  = {"ollama": "Ollama", "n8n": "n8n", "home_assistant": "Home Assistant",
+                        "navidrome": "Navidrome", "domoticz": "Domoticz"}
+            items = []
+            for key in _BUILTIN:
+                if filter_tag in overrides.get(key, {}).get("tags", []):
+                    svc    = s["services"].get(key, {})
+                    status = svc.get("status", "unknown")
+                    items.append(f"{icons.get(status, '🟡')} {_LABELS[key]} : {status_fr.get(status, status)}")
+            for ep in custom_eps:
+                if filter_tag in ep.get("tags", []):
+                    svc    = s["services"].get(ep["name"], {})
+                    status = svc.get("status", "unknown")
+                    items.append(f"{icons.get(status, '🟡')} {ep['name']} ({ep['url']}) : {status_fr.get(status, status)}")
+            if not items:
+                return f"🖥️ *Infrastructure [{filter_tag}]*\nAucun service taggué « {filter_tag} » trouvé."
+            return f"🖥️ *Infrastructure [{filter_tag}]*\n\n" + "\n".join(items)
+
+        # ── Mode global ────────────────────────────────────────────────────────
         labels = {
             "ollama":         "Ollama",
             "n8n":            "n8n",
@@ -343,11 +430,8 @@ class RuntimeStateManager:
             "navidrome":      "Navidrome",
             "domoticz":       "Domoticz",
         }
-        # Ajouter les custom endpoints avec leur propre label
-        custom_eps = _load_custom_endpoints()
         for ep in custom_eps:
             labels[ep["name"]] = ep["name"]
-        status_fr = {"online": "en ligne", "offline": "hors ligne", "unknown": "statut non vérifié"}
 
         lines = ["🖥️ *État infrastructure*\n"]
 

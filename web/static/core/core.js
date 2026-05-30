@@ -15,8 +15,10 @@ const VIEW_LOADERS = {
   webagent:  () => import('/static/views/webagent/index.js'),
   cameras:   () => import('/static/views/cameras/index.js'),
   marketing: () => import('/static/views/marketing/index.js'),
-  settings:  () => import('/static/views/settings/index.js'),
+  settings:  () => import('/static/views/settings/index.js?v=2'),
   auth:      () => import('/static/views/auth/index.js'),
+  // MODULE_SOCIETE
+  societe:   () => import('/static/views/societe/index.js?v=2'),
 };
 
 const VIEW_TITLES = {
@@ -30,6 +32,8 @@ const VIEW_TITLES = {
   marketing: 'Marketing',
   settings:  'Paramètres',
   auth:      'Connexion',
+  // MODULE_SOCIETE
+  societe:   'Sociétés',
 };
 
 // ── État global ─────────────────────────────────────────────────

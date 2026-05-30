@@ -25,6 +25,8 @@ ALL_MENU_TAGS: list[str] = [
     "marketing",     # data-view="marketing"
     "infrastructure",# data-page="infrastructure"
     "settings",      # data-view="settings"
+    # MODULE_SOCIETE
+    "societe",       # data-view="societe"
 ]
 
 # Définition des groupes prédéfinis

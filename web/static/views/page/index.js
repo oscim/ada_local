@@ -100,32 +100,197 @@ const PAGE_CONFIG = {
 };
 
 // ── Rendu des données contextuelles ─────────────────────────────
-function _renderInfra(data, el) {
-  const services  = data.services  || {};
-  const docker    = data.docker    || {};
-  const warnings  = data.warnings  || [];
+async function _renderInfra(data, el) {
+  const docker   = data.docker   || {};
+  const warnings = data.warnings || [];
 
-  const serviceRows = Object.entries(services).map(([k, v]) => {
-    const label = k === 'home_assistant' ? 'Home Assistant' : k;
-    return `<div class="page-status-row"><span><i class="page-dot ${v.status||'unknown'}"></i>${escapeHtml(label)}</span><b>${escapeHtml(v.status||'unknown')}</b></div>`;
-  }).join('');
+  // Fetch services, endpoints, tags in parallel
+  let builtinSvcs = [], customEps = [], availTags = ['local'];
+  try {
+    [builtinSvcs, customEps, availTags] = await Promise.all([
+      fetchJSON('/api/infra/services'),
+      fetchJSON('/api/infra/endpoints'),
+      fetchJSON('/api/tags/available'),
+    ]);
+    if (!Array.isArray(builtinSvcs)) builtinSvcs = [];
+    if (!Array.isArray(customEps))   customEps   = [];
+    if (!Array.isArray(availTags))   availTags   = ['local'];
+  } catch {}
+
+  // Merge into unified list
+  const allItems = [
+    ...builtinSvcs.map(s => ({ ...s, builtin: true,  url: '' })),
+    ...customEps .map(e => ({ ...e, builtin: false, status: e.status || 'unknown' })),
+  ];
 
   const containers = (docker.containers || []).slice(0, 8).map(
-    (c) => `<li>${escapeHtml(c.name)} · ${escapeHtml(c.status||'')}</li>`
+    c => `<li>${escapeHtml(c.name)} · ${escapeHtml(c.status || '')}</li>`
   ).join('');
 
   const warHtml = warnings.length
-    ? `<ul class="page-list">${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`
+    ? `<ul class="page-list">${warnings.map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>`
     : `<p class="page-muted">Aucune alerte.</p>`;
 
+  const tagOptsSel = availTags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  const tagOptsAll = `<option value="">Tous les tags</option>${tagOptsSel}`;
+
+  function _dot(status) {
+    const map = { online: '#00ff9d', offline: '#ff3b5c', unknown: '#ffa500' };
+    return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${map[status]||'#888'};flex-shrink:0"></span>`;
+  }
+
+  function _tagChips(tags) {
+    return (tags || ['local']).map(t => `<span class="ep-tag">${escapeHtml(t)}</span>`).join('');
+  }
+
+  function _tagSel(id, tags) {
+    return `<select class="ep-tag-sel" id="${id}" multiple title="Tags">${
+      availTags.map(t => `<option value="${escapeHtml(t)}"${(tags||[]).includes(t)?' selected':''}>${escapeHtml(t)}</option>`).join('')
+    }</select>`;
+  }
+
+  function _rowHtml(item) {
+    const dim = item.hidden ? 'opacity:0.38;' : '';
+    const svcLabel = item.name === 'home_assistant' ? 'Home Assistant' : item.name;
+    const urlPart = item.url
+      ? `<a href="${escapeHtml(item.url)}" target="_blank" class="ep-url">${escapeHtml(item.url)}</a>`
+      : `<span class="ep-url" style="color:#3a4a5a">${escapeHtml(item.status||'')}</span>`;
+    const selId = `ts-${escapeHtml(item.name).replace(/\./g,'-')}`;
+    const actionBtn = item.builtin
+      ? `<button class="ep-hide" data-svc="${escapeHtml(item.name)}" data-hidden="${item.hidden}" title="${item.hidden?'Afficher':'Masquer'}">${item.hidden?'👁':'🙈'}</button>`
+      : `<button class="ep-del" data-ep="${escapeHtml(item.name)}" title="Supprimer">✕</button>`;
+    return `<div class="ep-row${item.hidden?' ep-hidden':''}" data-name="${escapeHtml(item.name)}" data-status="${item.status||'unknown'}" data-tags="${escapeHtml(JSON.stringify(item.tags||[]))}" style="${dim}">
+      ${_dot(item.status||'unknown')}
+      <span class="ep-name">${escapeHtml(svcLabel)}</span>
+      ${urlPart}
+      <div class="ep-tags">${_tagChips(item.tags)}</div>
+      ${_tagSel(selId, item.tags)}
+      <button class="ep-tag-save" data-name="${escapeHtml(item.name)}" data-builtin="${item.builtin}" data-selid="${selId}" title="Sauvegarder les tags">💾</button>
+      ${actionBtn}
+    </div>`;
+  }
+
+  const tagOpts = availTags.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+
   el.innerHTML = `
-    <section class="page-panel"><h3>Services</h3>
-      <div class="page-status-list">${serviceRows || '<p class="page-muted">Aucune donnée.</p>'}</div>
+    <section class="page-panel" id="svc-panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+        <h3 style="margin:0;flex:none">Services</h3>
+        <select id="filter-status" style="padding:3px 7px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e8edf2;font-size:11px">
+          <option value="">Tous les états</option>
+          <option value="online">En ligne</option>
+          <option value="offline">Hors ligne</option>
+          <option value="unknown">Inconnu</option>
+        </select>
+        <select id="filter-tag" style="padding:3px 7px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e8edf2;font-size:11px">
+          ${tagOptsAll}
+        </select>
+        <label style="font-size:11px;color:#5a6a7a;display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="filter-hidden" style="cursor:pointer"> Voir masqués
+        </label>
+      </div>
+      <div id="svc-list">${allItems.map(_rowHtml).join('') || '<p class="page-muted">Aucun service.</p>'}</div>
+      <form id="ep-add-form" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+        <input id="ep-name" placeholder="Nom" style="flex:1;min-width:100px;padding:5px 8px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e8edf2;font-size:12px">
+        <input id="ep-url"  placeholder="URL (https://…)" style="flex:2;min-width:160px;padding:5px 8px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e8edf2;font-size:12px">
+        <select id="ep-tags" multiple title="Tags" style="min-width:120px;padding:4px 6px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:6px;color:#e8edf2;font-size:11px">${tagOpts}</select>
+        <button type="submit" style="padding:5px 12px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.4);border-radius:6px;color:#00d4ff;font-size:12px;cursor:pointer">+ Ajouter</button>
+      </form>
+      <style>
+        .ep-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)}
+        .ep-row.ep-hidden{border-bottom-style:dashed}
+        .ep-name{font-size:12px;font-weight:700;color:#e8edf2;min-width:90px}
+        .ep-url{font-size:11px;color:#5a6a7a;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .ep-url:hover{color:#00d4ff}
+        .ep-tags{display:flex;gap:4px;flex-wrap:wrap;min-width:40px}
+        .ep-tag{font-size:9px;padding:1px 6px;border-radius:8px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.2);color:#00d4ff}
+        .ep-tag-sel{font-size:10px;padding:2px 4px;background:#111820;border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:#e8edf2;height:48px}
+        .ep-tag-save,.ep-del,.ep-hide{background:none;border:none;cursor:pointer;color:#5a6a7a;font-size:11px;padding:2px 5px}
+        .ep-tag-save:hover{color:#00ff9d}.ep-del:hover{color:#ff3b5c}.ep-hide:hover{color:#ffa500}
+      </style>
     </section>
     <section class="page-panel"><h3>Docker</h3>
       ${containers ? `<ul class="page-list">${containers}</ul>` : '<p class="page-muted">Aucun container actif.</p>'}
     </section>
     <section class="page-panel"><h3>Alertes</h3>${warHtml}</section>`;
+
+  const panel = el.querySelector('#svc-panel');
+
+  // ── Filter logic ─────────────────────────────────────────────────────────
+  function _applyFilters() {
+    const stF = panel.querySelector('#filter-status').value;
+    const tgF = panel.querySelector('#filter-tag').value;
+    const showHidden = panel.querySelector('#filter-hidden').checked;
+    panel.querySelectorAll('.ep-row').forEach(row => {
+      const status  = row.dataset.status || '';
+      const rowTags = JSON.parse(row.dataset.tags || '[]');
+      const hidden  = row.classList.contains('ep-hidden');
+      let show = true;
+      if (!showHidden && hidden) show = false;
+      if (stF && status !== stF) show = false;
+      if (tgF && !rowTags.includes(tgF)) show = false;
+      row.style.display = show ? '' : 'none';
+    });
+  }
+
+  panel.querySelector('#filter-status').addEventListener('change', _applyFilters);
+  panel.querySelector('#filter-tag').addEventListener('change', _applyFilters);
+  panel.querySelector('#filter-hidden').addEventListener('change', _applyFilters);
+
+  // ── Save tags ─────────────────────────────────────────────────────────────
+  panel.querySelectorAll('.ep-tag-save').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name    = btn.dataset.name;
+      const builtin = btn.dataset.builtin === 'true';
+      const sel     = panel.querySelector(`#${btn.dataset.selid}`);
+      const tags    = Array.from(sel.selectedOptions).map(o => o.value);
+      const url = builtin
+        ? `/api/infra/services/${encodeURIComponent(name)}/tags`
+        : `/api/infra/endpoints/${encodeURIComponent(name)}/tags`;
+      await fetch(url, { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({tags}) });
+      if (typeof showToast === 'function') showToast('Tags mis à jour');
+      _renderInfra(data, el);
+    });
+  });
+
+  // ── Hide / show built-in services ─────────────────────────────────────────
+  panel.querySelectorAll('.ep-hide').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const name   = btn.dataset.svc;
+      const hidden = btn.dataset.hidden !== 'true';
+      await fetch(`/api/infra/services/${encodeURIComponent(name)}/hidden`, {
+        method: 'PATCH', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({hidden})
+      });
+      _renderInfra(data, el);
+    });
+  });
+
+  // ── Delete custom endpoint ────────────────────────────────────────────────
+  panel.querySelectorAll('.ep-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm(`Supprimer "${btn.dataset.ep}" ?`)) return;
+      await fetch(`/api/infra/endpoints/${encodeURIComponent(btn.dataset.ep)}`, {method:'DELETE'});
+      _renderInfra(data, el);
+    });
+  });
+
+  // ── Add custom endpoint ───────────────────────────────────────────────────
+  panel.querySelector('#ep-add-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = panel.querySelector('#ep-name').value.trim();
+    const url  = panel.querySelector('#ep-url').value.trim();
+    const sel  = panel.querySelector('#ep-tags');
+    const tags = Array.from(sel.selectedOptions).map(o => o.value);
+    if (!name || !url) return;
+    await fetch('/api/infra/endpoints', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name, url, tags: tags.length ? tags : ['local']})
+    });
+    panel.querySelector('#ep-name').value = '';
+    panel.querySelector('#ep-url').value  = '';
+    _renderInfra(data, el);
+  });
 }
 
 function _renderHome(data, el) {

@@ -42,6 +42,19 @@ from gui.components.voice_indicator import VoiceIndicator
 from core.llm import preload_models
 from core.i18n import tr
 
+# MODULE_SOCIETE: guard — imports conditionnels selon MODULES_ENABLED
+from config import MODULES_ENABLED as _MODULES_ENABLED
+if _MODULES_ENABLED.get("societe", False):
+    from core.plugin_registry import register_enabled_plugins
+    from gui.tabs.societe_dashboard import CompaniesDashboardTab
+    from gui.tabs.societe_detail import CompanyDetailTab
+    from gui.components.societe_context_bar import ChatContextBar as SocieteContextBar
+else:
+    register_enabled_plugins = None
+    CompaniesDashboardTab = None
+    CompanyDetailTab = None
+    SocieteContextBar = None
+
 
 class ModelPreloaderThread(QThread):
     """Background thread to preload models at startup."""
@@ -90,9 +103,17 @@ class MainWindow(FluentWindow):
         self.planner_tab = None
         self.briefing_view = None
         self.home_tab = None
+        # MODULE_SOCIETE: pointeurs onglets societe
+        self.societe_dashboard_tab = None
+        self.societe_detail_tabs: dict[str, "CompanyDetailTab"] = {}
+        self.societe_context_bar: "SocieteContextBar | None" = None
         
         # Flag to prevent duplicate signal connections
         self._chat_signals_connected = False
+
+        # MODULE_SOCIETE: enregistrement des plugins actifs
+        if _MODULES_ENABLED.get("societe", False) and register_enabled_plugins:
+            register_enabled_plugins()
 
         self._init_window()
         self._connect_signals()
@@ -249,6 +270,11 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.library_lazy, FIF.BOOK_SHELF, tr("nav.library"))
         self.addSubInterface(self.infra_lazy, FIF.IOT, tr("nav.infrastructure"))
 
+        # MODULE_SOCIETE: guard — ajout onglet societes si module activé
+        if _MODULES_ENABLED.get("societe", False) and CompaniesDashboardTab is not None:
+            self.societe_lazy = LazyTab(CompaniesDashboardTab, "societeDashboardInterface")
+            self.addSubInterface(self.societe_lazy, FIF.PEOPLE, tr("nav.societes"))
+
         # Settings at bottom
         self.settings_lazy = LazyTab(SettingsTab, "settingsInterface")
         self.addSubInterface(
@@ -277,6 +303,18 @@ class MainWindow(FluentWindow):
         
         # Initial sidebar refresh
         self.chat_tab.refresh_sidebar()
+
+        # MODULE_SOCIETE: insérer la ChatContextBar si module actif
+        if _MODULES_ENABLED.get("societe", False) and SocieteContextBar is not None:
+            try:
+                context_bar = SocieteContextBar()
+                self.societe_context_bar = context_bar
+                context_bar.context_changed.connect(self.handlers.set_societe_context)
+                # Insérer la barre au-dessus de la saisie du chat
+                if hasattr(self.chat_tab, "_inject_context_bar"):
+                    self.chat_tab._inject_context_bar(context_bar)
+            except Exception as exc:
+                print(f"[App] MODULE_SOCIETE: erreur context bar: {exc}")
 
     def _on_send(self, text):
         """Forward send request to handlers."""
@@ -325,6 +363,11 @@ class MainWindow(FluentWindow):
                 self.briefing_view = real_widget
             elif obj_name == "homeInterface":
                 self.home_tab = real_widget
+            # MODULE_SOCIETE: initialisation du dashboard societes
+            elif obj_name == "societeDashboardInterface":
+                self.societe_dashboard_tab = real_widget
+                if _MODULES_ENABLED.get("societe", False) and real_widget:
+                    real_widget.company_selected.connect(self._on_company_selected)
             elif obj_name == "browserInterface":
                 # No signals to connect for browser yet
                 pass
@@ -340,7 +383,29 @@ class MainWindow(FluentWindow):
             if widget.objectName() == route_key:
                 self.switchTo(widget)
                 return
-    
+
+    # MODULE_SOCIETE: navigation vers la vue détail d'une société
+    def _on_company_selected(self, company_id: str) -> None:
+        """# MODULE_SOCIETE: Ouvre/réaffiche la vue détail d'une société."""
+        if not _MODULES_ENABLED.get("societe", False) or CompanyDetailTab is None:
+            return
+        route = f"societeDetail_{company_id}"
+        # Vérifier si l'onglet existe déjà dans la pile
+        for i in range(self.stackedWidget.count()):
+            widget = self.stackedWidget.widget(i)
+            if widget.objectName() == route:
+                self.switchTo(widget)
+                return
+        # Créer le tab détail à la volée
+        detail = CompanyDetailTab(company_id)
+        detail.back_requested.connect(
+            lambda: self._navigate_to_tab("societeDashboardInterface")
+        )
+        self.addSubInterface(detail, FIF.PEOPLE, company_id)
+        self.societe_detail_tabs[company_id] = detail
+        self.switchTo(detail)
+
+
     # --- Public Methods for Handlers (Proxy/Facade) ---
     # These now check if the tab exists before calling
     

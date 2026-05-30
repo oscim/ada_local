@@ -26,11 +26,32 @@ if _base.endswith("/api"):
     _base = _base[:-4]
 _OLLAMA_CHAT_URL = f"{_base}/api/chat"
 
+
+def _chat_model() -> str:
+    """Lit le modèle de chat depuis settings (dynamique, sans redémarrage)."""
+    from core.settings_store import settings as _s
+    return _s.get("models.chat", RESPONDER_MODEL) or RESPONDER_MODEL
+
+
+def _chat_url() -> str:
+    """Construit l'URL chat Ollama depuis settings (dynamique, sans redémarrage)."""
+    from core.settings_store import settings as _s
+    url = _s.get("ollama_url", OLLAMA_URL) or OLLAMA_URL
+    b = url.rstrip("/")
+    if b.endswith("/api"):
+        b = b[:-4]
+    return f"{b}/api/chat"
+
 # ---------------------------------------------------------------------------
 # Pattern : "ajoute l'URL https://... à l'infra" (et variantes)
 _ADD_URL_RE = re.compile(
     r"(?:ajoute|surveille|monitore|vérifie|watch)\b"
-    r".*?(https?://[^\s<>\"\)\]]+)",
+    r".*?((?:https?://)?[a-zA-Z0-9][a-zA-Z0-9\-\.]+\.[a-zA-Z]{2,}(?:/[^\s<>\"\)\]]*)?)",
+    re.IGNORECASE,
+)
+# Extraction du/des tags depuis "avec le tag X" ou "avec les tags X, Y"
+_ADD_TAG_RE = re.compile(
+    r"avec le(?:s)? tags?\s+([a-zA-Z0-9_,\s]+?)(?:\.|$|\s+(?:et|à|a)\b)",
     re.IGNORECASE,
 )
 
@@ -357,7 +378,7 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
                     async with httpx.AsyncClient(timeout=120.0) as client:
                         r = await client.post(
                             chat_url,
-                            json={"model": RESPONDER_MODEL, "messages": messages_llm,
+                            json={"model": _chat_model(), "messages": messages_llm,
                                   "stream": False, "think": False},
                         )
                         r.raise_for_status()
@@ -484,7 +505,7 @@ async def _stream_ollama(
     thinking: bool = False,
 ) -> AsyncGenerator[str, None]:
     payload: dict = {
-        "model": RESPONDER_MODEL,
+        "model": _chat_model(),
         "messages": messages,
         "stream": True,
         "options": {"num_predict": 1024, "temperature": 0.7},
@@ -493,7 +514,7 @@ async def _stream_ollama(
         payload["think"] = True  # Qwen3 extended reasoning
 
     async with httpx.AsyncClient(timeout=120.0) as client:
-        async with client.stream("POST", _OLLAMA_CHAT_URL, json=payload) as resp:
+        async with client.stream("POST", _chat_url(), json=payload) as resp:
             resp.raise_for_status()
             async for raw in resp.aiter_lines():
                 if not raw:
@@ -512,14 +533,14 @@ async def _stream_ollama(
 
 async def _call_llm(messages: list[dict], thinking: bool = False) -> str:
     payload: dict = {
-        "model": RESPONDER_MODEL,
+        "model": _chat_model(),
         "messages": messages,
         "stream": False,
         "think": bool(thinking),
         "keep_alive": "5m",
     }
     async with httpx.AsyncClient(timeout=150.0) as client:
-        r = await client.post(_OLLAMA_CHAT_URL, json=payload)
+        r = await client.post(_chat_url(), json=payload)
         r.raise_for_status()
         return r.json().get("message", {}).get("content", "").strip()
 
@@ -529,9 +550,9 @@ async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
     try:
         async with httpx.AsyncClient(timeout=150.0) as client:
             r = await client.post(
-                _OLLAMA_CHAT_URL,
+                _chat_url(),
                 json={
-                    "model": RESPONDER_MODEL,
+                    "model": _chat_model(),
                     "messages": [
                         {
                             "role": "system",
@@ -584,6 +605,7 @@ async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
 async def process_message(
     message: str,
     history: list[dict],
+    company_context: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Route et traite un message, yield les chunks de réponse au fil de l'eau.
@@ -598,15 +620,28 @@ async def process_message(
 
     # Ajout d'une URL à la surveillance d'infrastructure
     m_url = _ADD_URL_RE.search(user_text)
-    if m_url and any(k in text_lower for k in ("infra", "infrastructure", "surveillance", "surveille", "monitore", "watch", "vérifie", "vérifie")):
+    if m_url and any(k in text_lower for k in ("infra", "infrastructure", "surveillance", "surveille", "monitore", "watch", "vérifie", "ajoute")):
         from urllib.parse import urlparse
         from core.runtime_state import add_custom_endpoint
         raw_url = m_url.group(1).rstrip(".,;)>")
+        # Normaliser : ajouter https:// si pas de schéma
+        if not raw_url.startswith(("http://", "https://")):
+            raw_url = "https://" + raw_url
         name = urlparse(raw_url).netloc or raw_url
-        add_custom_endpoint(name, raw_url)
+        # Extraire les tags depuis "avec le tag X" / "avec les tags X, Y"
+        tags = ["local"]
+        m_tag = _ADD_TAG_RE.search(user_text)
+        if m_tag:
+            raw_tags = m_tag.group(1)
+            tags = [t.strip().lower() for t in re.split(r"[,\s]+", raw_tags) if t.strip()]
+            if "local" not in tags:
+                tags = ["local"] + tags
+        add_custom_endpoint(name, raw_url, tags=tags)
+        tags_str = ", ".join(f"`{t}`" for t in tags)
         response = (
             f"✅ **{name}** ajouté à la surveillance.\n"
             f"URL : `{raw_url}`\n"
+            f"Tags : {tags_str}\n"
             "Il apparaîtra dans l'état infrastructure dès la prochaine demande."
         )
         memory_store.save(session_id, "user", user_text)
@@ -630,7 +665,7 @@ async def process_message(
         from core.runtime_state import runtime_state
 
         runtime_state.refresh()
-        infra = runtime_state.format_infra_status_fr()
+        infra = runtime_state.format_infra_status_fr(filter_tag=company_context)
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", infra)
         yield infra

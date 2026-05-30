@@ -251,6 +251,11 @@ FUNCTIONS = [
     },
 ]
 
+# MODULE_SOCIETE: feature flag — mettre à False pour désactiver entièrement le module
+MODULES_ENABLED: dict = {
+    "societe": True,
+}
+
 # --- Console Colors ---
 GRAY = "\033[90m"
 RESET = "\033[0m"

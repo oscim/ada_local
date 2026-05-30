@@ -86,8 +86,26 @@ app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
 app.add_middleware(_AuthMiddleware)
 app.include_router(_auth_router)
 
+# MODULE_SOCIETE: guard — router branché uniquement si module actif
+from config import MODULES_ENABLED as _MODULES_ENABLED
+if _MODULES_ENABLED.get("societe", False):
+    from web.router_societe import router as _societe_router
+    app.include_router(_societe_router)
+
 _STATIC = Path(__file__).parent / "static"
-app.mount("/static", StaticFiles(directory=str(_STATIC)), name="static")
+
+
+class _NoCacheStaticFiles(StaticFiles):
+    """StaticFiles avec Cache-Control: no-cache pour forcer la revalidation ETag."""
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        from starlette.staticfiles import NotModifiedResponse
+        response = super().file_response(full_path, stat_result, scope, status_code)
+        if not isinstance(response, NotModifiedResponse):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
+app.mount("/static", _NoCacheStaticFiles(directory=str(_STATIC)), name="static")
 
 
 @app.on_event("startup")
@@ -98,6 +116,24 @@ async def _startup() -> None:
     if settings.get("auth.enabled", False):
         from web.auth_db import initialize as _auth_db_init
         _auth_db_init()
+    # MODULE_SOCIETE: enregistrement des plugins au démarrage web
+    if _MODULES_ENABLED.get("societe", False):
+        from core.plugin_registry import register_enabled_plugins
+        register_enabled_plugins()
+    # Ping périodique des services infra (built-in + custom endpoints) toutes les 90s
+    import asyncio as _aio
+    async def _infra_poller():
+        from core.runtime_state import runtime_state as _rs
+        import concurrent.futures as _cf
+        _pool = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="infra-poll")
+        while True:
+            try:
+                loop = _aio.get_event_loop()
+                await loop.run_in_executor(_pool, _rs.refresh)
+            except Exception:
+                pass
+            await _aio.sleep(90)
+    _aio.create_task(_infra_poller())
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +166,7 @@ async def index():
 class ChatRequest(BaseModel):
     message: str
     history: list[dict] = []
+    company_context: str | None = None
 
 
 @app.post("/api/chat")
@@ -141,7 +178,7 @@ async def chat(req: ChatRequest):
     """
     async def _sse():
         try:
-            async for chunk in process_message(req.message, req.history):
+            async for chunk in process_message(req.message, req.history, company_context=req.company_context):
                 if chunk.startswith('\x00img\x00'):
                     img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
                     yield f"data: {json.dumps({'img_url': img_url})}\n\n"
@@ -699,6 +736,11 @@ async def page_infrastructure():
 class EndpointRequest(BaseModel):
     name: str
     url: str
+    tags: list[str] = ["local"]
+
+
+class EndpointTagsUpdate(BaseModel):
+    tags: list[str]
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +784,55 @@ async def get_ollama_models():
     return []
 
 
+class OllamaPullRequest(BaseModel):
+    name: str
+
+
+@app.post("/api/ollama/pull")
+async def ollama_pull(body: OllamaPullRequest):
+    """Pull un modèle Ollama. Retourne un SSE avec la progression."""
+    from core.settings_store import settings as _s
+    base = _s.get("ollama_url", "http://localhost:11434").rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Nom du modèle requis")
+
+    async def _stream():
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                async with client.stream(
+                    "POST", f"{base}/api/pull",
+                    json={"name": name, "stream": True}
+                ) as resp:
+                    async for line in resp.aiter_lines():
+                        if line:
+                            yield f"data: {line}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'error': str(exc)})}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")
+
+
+@app.delete("/api/ollama/models/{model_name:path}")
+async def ollama_delete_model(model_name: str):
+    """Supprime un modèle Ollama installé."""
+    from core.settings_store import settings as _s
+    base = _s.get("ollama_url", "http://localhost:11434").rstrip("/")
+    if base.endswith("/api"):
+        base = base[:-4]
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.request("DELETE", f"{base}/api/delete", json={"name": model_name})
+            if r.status_code in (200, 204):
+                return {"ok": True}
+            return {"ok": False, "detail": r.text}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.get("/api/infra/endpoints")
 async def list_custom_endpoints():
     from core.runtime_state import _load_custom_endpoints
@@ -751,8 +842,15 @@ async def list_custom_endpoints():
 @app.post("/api/infra/endpoints")
 async def add_custom_endpoint_api(req: EndpointRequest):
     from core.runtime_state import add_custom_endpoint
-    add_custom_endpoint(req.name.strip(), req.url.strip())
+    add_custom_endpoint(req.name.strip(), req.url.strip(), req.tags)
     return {"ok": True}
+
+
+@app.patch("/api/infra/endpoints/{name}/tags")
+async def update_endpoint_tags_api(name: str, req: EndpointTagsUpdate):
+    from core.runtime_state import update_endpoint_tags
+    ok = update_endpoint_tags(name, req.tags)
+    return {"ok": ok}
 
 
 @app.delete("/api/infra/endpoints/{name}")
@@ -760,6 +858,50 @@ async def remove_custom_endpoint_api(name: str):
     from core.runtime_state import remove_custom_endpoint
     found = remove_custom_endpoint(name)
     return {"ok": found}
+
+
+class _ServiceHiddenBody(BaseModel):
+    hidden: bool
+
+
+class _ServiceTagsBody(BaseModel):
+    tags: list[str]
+
+
+@app.get("/api/infra/services")
+async def list_infra_services():
+    """Retourne les services built-in avec statut, tags et flag hidden."""
+    from core.runtime_state import runtime_state, _BUILTIN_SERVICES, _load_service_overrides
+    state = runtime_state.get_infra_summary()
+    svcs = state.get("services", {})
+    overrides = _load_service_overrides()
+    result = []
+    for name in _BUILTIN_SERVICES:
+        svc = svcs.get(name, {"status": "unknown", "details": ""})
+        ov = overrides.get(name, {})
+        result.append({
+            "name": name,
+            "status": svc.get("status", "unknown"),
+            "details": svc.get("details", ""),
+            "tags": ov.get("tags", ["local"]),
+            "hidden": ov.get("hidden", False),
+            "builtin": True,
+        })
+    return result
+
+
+@app.patch("/api/infra/services/{name}/hidden")
+async def update_service_hidden_api(name: str, body: _ServiceHiddenBody):
+    from core.runtime_state import update_service_hidden
+    update_service_hidden(name, body.hidden)
+    return {"ok": True}
+
+
+@app.patch("/api/infra/services/{name}/tags")
+async def update_service_tags_api(name: str, body: _ServiceTagsBody):
+    from core.runtime_state import update_service_tags
+    update_service_tags(name, body.tags)
+    return {"ok": True}
 
 
 @app.get("/api/page/memory")
@@ -1277,3 +1419,41 @@ async def marketing_history_delete(entry_id: int):
     from core.marketing_executor import delete_history_entry
     delete_history_entry(entry_id)
     return {"ok": True}
+
+
+class _TagsBody(BaseModel):
+    tags: list[str]
+
+
+@app.patch("/api/marketing/history/{entry_id}/tags")
+async def marketing_history_tags(entry_id: int, req: _TagsBody):
+    from core.marketing_executor import update_history_tags
+    ok = update_history_tags(entry_id, req.tags)
+    return {"ok": ok}
+
+
+@app.get("/api/tags/available")
+async def get_available_tags():
+    """Retourne les tags disponibles : local + noms des societes."""
+    tags = ["local"]
+    try:
+        from core.societe.company_model import company_model
+        companies = company_model.list_companies()
+        tags += [c["id"] for c in companies if c.get("id")]
+    except Exception:
+        pass
+    return tags
+
+
+@app.get("/api/societe/companies/{company_id}/tagged-items")
+async def get_tagged_items(company_id: str):
+    """Retourne les endpoints infra + contenus marketing taggés avec company_id,
+    avec statut live depuis runtime_state."""
+    from core.runtime_state import _load_custom_endpoints, runtime_state
+    from core.marketing_executor import get_history
+    live_services = runtime_state.get_infra_summary().get("services", {})
+    raw_eps = [ep for ep in _load_custom_endpoints() if company_id in ep.get("tags", [])]
+    endpoints = [{**ep, "status": live_services.get(ep["name"], {}).get("status", "unknown"),
+                  "details": live_services.get(ep["name"], {}).get("details", "")} for ep in raw_eps]
+    marketing = [h for h in get_history(limit=200) if company_id in h.get("tags", [])]
+    return {"endpoints": endpoints, "marketing": marketing}

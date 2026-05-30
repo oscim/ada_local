@@ -111,7 +111,7 @@ function _mkSelect(key, label, desc = '', options = []) {
 
 function _mkModelSelect(key, label, desc = '') {
   const current = String(_get(key));
-  const opts = _models.map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`).join('');
+  const opts = Array.isArray(_models) ? _models.map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`).join('') : `<option value="${current}">${current || '—'}</option>`;
   return `
   <div class="s-row">
     <div class="s-row-info">
@@ -164,6 +164,7 @@ function _mkModules() {
     { key: 'modules.print3d',      icon: '🖨️', label: 'Impression 3D', sub: 'K1, OctoPrint…' },
     { key: 'modules.music',        icon: '🎵', label: 'Musique',       sub: 'Navidrome' },
     { key: 'modules.bibliotheque', icon: '📚', label: 'Bibliothèque',  sub: 'Calibre-Web' },
+    { key: 'modules.societe',      icon: '🏢', label: 'Sociétés CRM', sub: 'Tableau de bord' },
   ];
   const cards = mods.map(m => {
     const on = _get(m.key);
@@ -231,6 +232,26 @@ function _panelLLM() {
     _sec('Modèles IA', [
       _mkModelSelect('models.chat', 'Modèle principal', 'Utilisé pour la discussion générale'),
       _mkModelSelect('models.web_agent', 'Modèle Web Agent', 'Modèle vision pour l\'agent web'),
+    ].join('')),
+
+    _sec('Gérer les modèles Ollama', [
+      `<div class="s-row">
+        <div class="s-row-info">
+          <div class="s-row-label">Télécharger un modèle</div>
+          <div class="s-row-desc">ex: mistral:latest · llama3.2:3b · gemma3:4b · qwen2.5:7b</div>
+        </div>
+        <div class="s-row-end">
+          <input class="s-input wide" id="pull-model-input" placeholder="nom:tag" type="text" autocomplete="off">
+          <button class="s-btn" id="pull-model-btn">⬇ Télécharger</button>
+        </div>
+      </div>`,
+      `<div id="pull-progress" style="display:none;padding:4px 0 8px">
+        <div style="font-size:11px;color:#5a6a7a;font-family:ui-monospace,monospace;margin-bottom:4px" id="pull-status">Téléchargement…</div>
+        <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px">
+          <div id="pull-bar" style="height:100%;background:#00d4ff;border-radius:2px;width:0%;transition:width .4s"></div>
+        </div>
+      </div>`,
+      `<div id="installed-models-list" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>`,
     ].join('')),
 
     _sec('Routage sémantique', [
@@ -307,6 +328,70 @@ function _panelBibliotheque() {
       _mkText('calibre.password', 'Mot de passe', 'Mot de passe Calibre-Web', '', 'password'),
     ].join('')),
   ].join('');
+}
+
+// MODULE_SOCIETE: panel settings
+async function _panelSociete() {
+  let companies = [];
+  try {
+    const r = await fetch('/api/societe/companies');
+    if (r.ok) companies = await r.json();
+  } catch {}
+
+  const rows = companies.length
+    ? companies.map(c => `
+      <div class="sc-row" data-cid="${c.id}">
+        <span class="sc-logo">${c.logo || '🏢'}</span>
+        <span class="sc-name">${c.name}</span>
+        <span class="sc-tag sc-tag--${c.type || 'client'}">${c.type || 'client'}</span>
+        <span class="sc-tag sc-tag--${c.status || 'active'}">${c.status || 'active'}</span>
+        <button class="s-btn sc-edit-btn" data-cid="${c.id}" title="Modifier">✏️</button>
+        <button class="s-btn danger sc-del-btn" data-cid="${c.id}" title="Supprimer">✕</button>
+      </div>`).join('')
+    : '<div style="color:#64748b;font-size:.85rem;padding:.5rem 0">Aucune société enregistrée</div>';
+
+  return `
+  ${_sec('Activation', [
+    _mkToggle('modules.societe', 'Activer le module Sociétés CRM',
+      'Active le tableau de bord, les API et la navigation — pris en compte au prochain démarrage'),
+  ].join(''))}
+
+  ${_sec(`Sociétés enregistrées (${companies.length})`, `<div id="sc-list">${rows}</div>`)}
+
+  ${_sec('Ajouter une société', `
+    <div class="sc-form" id="sc-add-form">
+      <div class="sc-form-row">
+        <input class="s-input" id="sc-f-id"    placeholder="ID unique* (ex: acme)" />
+        <input class="s-input" id="sc-f-name"  placeholder="Nom affiché *" />
+      </div>
+      <div class="sc-form-row">
+        <input class="s-input sc-emoji" id="sc-f-logo"  placeholder="🏢" value="🏢" />
+        <input class="s-input sc-color" id="sc-f-color" type="color" value="#5E6AD2" />
+        <select class="s-input" id="sc-f-type">
+          <option value="SARL">SARL</option>
+          <option value="SAS">SAS</option>
+          <option value="EI">EI (Entreprise Individuelle)</option>
+          <option value="SCI">SCI</option>
+          <option value="Holding">Holding</option>
+          <option value="Autre">Autre</option>
+        </select>
+        <select class="s-input" id="sc-f-status">
+          <option value="active">active</option>
+          <option value="archive">archive</option>
+        </select>
+      </div>
+      <div class="sc-form-row">
+        <input class="s-input" id="sc-f-email"   placeholder="Email" />
+        <input class="s-input" id="sc-f-phone"   placeholder="Téléphone" />
+        <input class="s-input" id="sc-f-website" placeholder="Site web" />
+      </div>
+      <div class="sc-form-row">
+        <textarea class="s-input sc-notes" id="sc-f-notes" placeholder="Notes internes…" rows="2"></textarea>
+      </div>
+      <button class="s-btn primary" id="sc-add-btn">➕ Ajouter la société</button>
+      <span id="sc-add-status" style="margin-left:.75rem;font-size:.85rem"></span>
+    </div>
+  `)}`;
 }
 
 // ── Panel Auth ────────────────────────────────────────────────
@@ -420,7 +505,10 @@ async function _panelAuth() {
 
 // ── Build HTML ────────────────────────────────────────────────
 async function _buildHTML() {
-  const authHtml = await _panelAuth();
+  const [authHtml, societeHtml] = await Promise.all([
+    _panelAuth(),
+    _panelSociete(),
+  ]);
   return `
 <div class="settings-wrap">
   <div class="s-tabbar">
@@ -430,6 +518,7 @@ async function _buildHTML() {
     <button class="s-tab" data-panel="print3d">🖨 Impression 3D</button>
     <button class="s-tab" data-panel="music">🎵 Musique</button>
     <button class="s-tab" data-panel="bibliotheque">📚 Bibliothèque</button>
+    <button class="s-tab" data-panel="societe">🏢 Sociétés</button>
     <button class="s-tab" data-panel="auth">🔐 Auth</button>
     <span class="s-save-dot" id="s-savedot"></span>
   </div>
@@ -440,6 +529,7 @@ async function _buildHTML() {
     <div class="s-panel" id="panel-print3d">${_panelPrint3D()}</div>
     <div class="s-panel" id="panel-music">${_panelMusique()}</div>
     <div class="s-panel" id="panel-bibliotheque">${_panelBibliotheque()}</div>
+    <div class="s-panel" id="panel-societe">${societeHtml}</div>
     <div class="s-panel" id="panel-auth">${authHtml}</div>
   </div>
 </div>`;
@@ -518,6 +608,66 @@ function _bindEvents(root) {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => _loadModels(root));
   }
+
+  // Pull model
+  const pullBtn   = root.querySelector('#pull-model-btn');
+  const pullInput = root.querySelector('#pull-model-input');
+  if (pullBtn && pullInput) {
+    const _startPull = async () => {
+      const name = pullInput.value.trim();
+      if (!name) return;
+      const progress  = root.querySelector('#pull-progress');
+      const statusEl  = root.querySelector('#pull-status');
+      const barEl     = root.querySelector('#pull-bar');
+      pullBtn.disabled = true;
+      pullInput.disabled = true;
+      if (progress) progress.style.display = 'block';
+      if (statusEl) statusEl.textContent = `Démarrage du téléchargement de ${name}…`;
+      if (barEl) barEl.style.width = '0%';
+      try {
+        const resp = await fetch('/api/ollama/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const reader  = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop();
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const raw = line.slice(5).trim();
+            if (raw === '[DONE]') break;
+            try {
+              const d = JSON.parse(raw);
+              if (d.error) { if (statusEl) statusEl.textContent = `Erreur : ${d.error}`; break; }
+              if (d.status && statusEl) statusEl.textContent = d.status;
+              if (d.total && d.completed && barEl) {
+                barEl.style.width = Math.round((d.completed / d.total) * 100) + '%';
+              }
+            } catch {}
+          }
+        }
+        if (statusEl) statusEl.textContent = `${name} téléchargé ✓`;
+        if (barEl) barEl.style.width = '100%';
+        pullInput.value = '';
+        await _loadModels(root);
+      } catch(e) {
+        if (statusEl) statusEl.textContent = `Erreur : ${e.message}`;
+      } finally {
+        pullBtn.disabled = false;
+        pullInput.disabled = false;
+        setTimeout(() => { if (progress) progress.style.display = 'none'; }, 3000);
+      }
+    };
+    pullBtn.addEventListener('click', _startPull);
+    pullInput.addEventListener('keydown', e => { if (e.key === 'Enter') _startPull(); });
+  }
 }
 
 async function _testConnection(btn, root) {
@@ -571,7 +721,8 @@ async function _loadModels(root) {
   if (countEl) countEl.textContent = 'Chargement…';
   try {
     const r = await fetch('/api/ollama/models');
-    _models = await r.json();
+    const data = await r.json();
+    _models = Array.isArray(data) ? data : [];
     if (countEl) countEl.textContent = `${_models.length} modèle(s) disponible(s)`;
     // Refresh model selects
     ['models.chat', 'models.web_agent'].forEach(key => {
@@ -580,6 +731,34 @@ async function _loadModels(root) {
       const current = _get(key);
       sel.innerHTML = _models.map(m => `<option value="${m}" ${m === current ? 'selected' : ''}>${m}</option>`).join('');
     });
+    // Refresh installed models list
+    const listEl = root.querySelector('#installed-models-list');
+    if (listEl) {
+      listEl.innerHTML = _models.length ? _models.map(m => `
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;
+          background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.06);
+          border-radius:8px">
+          <span style="font-size:11px;font-family:ui-monospace,monospace;color:#e8edf2;flex:1">${m}</span>
+          <button class="s-btn" style="font-size:10px;padding:3px 10px;color:#ff3b5c;border-color:rgba(255,59,92,0.3)"
+            data-delete-model="${m}">✕ Supprimer</button>
+        </div>`).join('')
+        : '<div style="font-size:11px;color:#5a6a7a">Aucun modèle installé</div>';
+      // Bind delete buttons
+      listEl.querySelectorAll('[data-delete-model]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const name = btn.dataset.deleteModel;
+          if (!confirm(`Supprimer le modèle "${name}" ? Cette action est irréversible.`)) return;
+          btn.disabled = true;
+          btn.textContent = '…';
+          try {
+            const res = await fetch(`/api/ollama/models/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.ok) await _loadModels(root);
+            else btn.textContent = '✗ Erreur';
+          } catch { btn.textContent = '✗ Erreur'; }
+        });
+      });
+    }
   } catch {
     if (countEl) countEl.textContent = 'Ollama inaccessible';
   }
@@ -741,6 +920,202 @@ async function _loadMyDevices(root) {
   } catch { list.innerHTML = '<span style="color:#64748b;font-size:.85rem">Erreur chargement</span>'; }
 }
 
+// ── MODULE_SOCIETE: Company CRUD events ───────────────────────
+function _bindSocieteEvents(root) {
+  const panel = root.querySelector('#panel-societe');
+  if (!panel) return;
+
+  // Supprimer une société
+  panel.addEventListener('click', async e => {
+    const delBtn = e.target.closest('.sc-del-btn');
+    if (delBtn) {
+      const cid = delBtn.dataset.cid;
+      if (!confirm(`Supprimer la société "${cid}" ? Cette action est irréversible.`)) return;
+      try {
+        const r = await fetch(`/api/societe/companies/${cid}`, { method: 'DELETE' });
+        if (!r.ok) throw new Error(await r.text());
+        delBtn.closest('.sc-row').remove();
+        showToast(`Société "${cid}" supprimée`);
+        // Update compteur
+        const h3 = panel.querySelector('.s-section-title');
+        if (h3 && h3.textContent.includes('enregistrées')) {
+          const remaining = panel.querySelectorAll('.sc-row').length;
+          h3.textContent = `Sociétés enregistrées (${remaining})`;
+        }
+      } catch (err) { showToast('Erreur : ' + err.message); }
+    }
+  });
+
+  // Modifier une société (édition inline)
+  panel.addEventListener('click', async e => {
+    const editBtn = e.target.closest('.sc-edit-btn');
+    if (!editBtn) return;
+    const cid = editBtn.dataset.cid;
+    const row = editBtn.closest('.sc-row');
+    if (!row || row.classList.contains('editing')) return;
+    let company;
+    try {
+      const r = await fetch(`/api/societe/companies/${cid}`);
+      if (!r.ok) throw new Error(await r.text());
+      company = await r.json();
+    } catch(err) { showToast('Erreur chargement : ' + err.message); return; }
+
+    const origHtml = row.innerHTML;
+    row.classList.add('editing');
+    const typeOpts = ['SARL','SAS','EI','SCI','Holding','Autre']
+      .map(t => `<option value="${t}"${company.type===t?' selected':''}>${t}</option>`).join('');
+    const statusOpts = ['active','archive']
+      .map(s => `<option value="${s}"${company.status===s?' selected':''}>${s}</option>`).join('');
+
+    row.innerHTML = `
+      <div class="sc-edit-inline">
+        <div class="sc-form" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+          <label class="sc-form-row"><span>Nom</span><input class="s-input sc-e-name" value="${company.name}"></label>
+          <label class="sc-form-row"><span>Forme</span><select class="s-input sc-e-type">${typeOpts}</select></label>
+          <label class="sc-form-row"><span>Statut</span><select class="s-input sc-e-status">${statusOpts}</select></label>
+          <label class="sc-form-row"><span>Email</span><input class="s-input sc-e-email" value="${company.email||''}"></label>
+          <label class="sc-form-row"><span>Tél</span><input class="s-input sc-e-phone" value="${company.phone||''}"></label>
+          <label class="sc-form-row"><span>Site</span><input class="s-input sc-e-website" value="${company.website||''}"></label>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <label class="sc-form-row" style="flex:0 0 auto">
+            <span>Logo</span><input class="s-input sc-e-logo" value="${company.logo||'🏢'}" style="width:64px">
+          </label>
+          <label class="sc-form-row" style="flex:0 0 auto">
+            <span>Couleur</span><input type="color" class="sc-e-color sc-color" value="${company.color||'#5E6AD2'}">
+          </label>
+          <label class="sc-form-row" style="flex:1">
+            <span>Notes</span><input class="s-input sc-e-notes" value="${company.notes||''}">
+          </label>
+          <button class="s-btn primary sc-e-save" data-cid="${cid}">✓ Sauvegarder</button>
+          <button class="s-btn sc-e-cancel">✕ Annuler</button>
+        </div>
+      </div>`;
+
+    row.querySelector('.sc-e-cancel').addEventListener('click', () => {
+      row.innerHTML = origHtml;
+      row.classList.remove('editing');
+    });
+
+    row.querySelector('.sc-e-save').addEventListener('click', async () => {
+      const get = cls => row.querySelector(cls)?.value?.trim() || '';
+      const payload = {
+        name:    get('.sc-e-name'),
+        type:    row.querySelector('.sc-e-type')?.value || 'SARL',
+        status:  row.querySelector('.sc-e-status')?.value || 'active',
+        email:   get('.sc-e-email'),
+        phone:   get('.sc-e-phone'),
+        website: get('.sc-e-website'),
+        logo:    get('.sc-e-logo') || '🏢',
+        color:   get('.sc-e-color') || '#5E6AD2',
+        notes:   get('.sc-e-notes'),
+      };
+      try {
+        const r = await fetch(`/api/societe/companies/${cid}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({ detail: r.statusText }));
+          throw new Error(err.detail || r.statusText);
+        }
+        const updated = await r.json();
+        row.classList.remove('editing');
+        row.innerHTML = `
+          <span class="sc-logo">${updated.logo || '🏢'}</span>
+          <span class="sc-name">${updated.name}</span>
+          <span class="sc-tag sc-tag--${updated.type}">${updated.type}</span>
+          <span class="sc-tag sc-tag--${updated.status}">${updated.status}</span>
+          <button class="s-btn sc-edit-btn" data-cid="${updated.id}" title="Modifier">✏️</button>
+          <button class="s-btn danger sc-del-btn" data-cid="${updated.id}" title="Supprimer">✕</button>`;
+        showToast(`"${updated.name}" mis à jour`);
+      } catch(err) { showToast('Erreur : ' + err.message); }
+    });
+  });
+
+  // Ajouter une société
+  const addBtn = panel.querySelector('#sc-add-btn');
+  if (!addBtn) return;
+  addBtn.addEventListener('click', async () => {
+    const get = id => panel.querySelector(id)?.value?.trim() || '';
+    const id   = get('#sc-f-id');
+    const name = get('#sc-f-name');
+    if (!id || !name) { showToast('ID et Nom sont obligatoires'); return; }
+
+    const payload = {
+      id,
+      name,
+      logo:    get('#sc-f-logo') || '🏢',
+      color:   get('#sc-f-color') || '#5E6AD2',
+      type:    panel.querySelector('#sc-f-type')?.value || 'SARL',
+      status:  panel.querySelector('#sc-f-status')?.value || 'active',
+      email:   get('#sc-f-email'),
+      phone:   get('#sc-f-phone'),
+      website: get('#sc-f-website'),
+      notes:   panel.querySelector('#sc-f-notes')?.value?.trim() || '',
+    };
+
+    const statusEl = panel.querySelector('#sc-add-status');
+    addBtn.disabled = true;
+    if (statusEl) statusEl.textContent = '…';
+    try {
+      const r = await fetch('/api/societe/companies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ detail: r.statusText }));
+        throw new Error(err.detail || r.statusText);
+      }
+      const created = await r.json();
+
+      // Injecter dans la liste
+      const list = panel.querySelector('#sc-list');
+      if (list) {
+        // Retirer le message "Aucune société"
+        const empty = list.querySelector('div[style]');
+        if (empty) empty.remove();
+        const row = document.createElement('div');
+        row.className = 'sc-row';
+        row.dataset.cid = created.id;
+        row.innerHTML = `
+          <span class="sc-logo">${created.logo || '🏢'}</span>
+          <span class="sc-name">${created.name}</span>
+          <span class="sc-tag sc-tag--${created.type}">${created.type}</span>
+          <span class="sc-tag sc-tag--${created.status}">${created.status}</span>
+          <button class="s-btn sc-edit-btn" data-cid="${created.id}" title="Modifier">✏️</button>
+          <button class="s-btn danger sc-del-btn" data-cid="${created.id}" title="Supprimer">✕</button>`;
+        list.appendChild(row);
+      }
+      // Update compteur
+      const h3 = panel.querySelector('.s-section-title');
+      if (h3 && h3.textContent.includes('enregistrées')) {
+        const total = panel.querySelectorAll('.sc-row').length;
+        h3.textContent = `Sociétés enregistrées (${total})`;
+      }
+      // Reset form
+      ['#sc-f-id','#sc-f-name','#sc-f-email','#sc-f-phone','#sc-f-website'].forEach(sel => {
+        const el = panel.querySelector(sel);
+        if (el) el.value = '';
+      });
+      panel.querySelector('#sc-f-logo').value = '🏢';
+      panel.querySelector('#sc-f-color').value = '#5E6AD2';
+      panel.querySelector('#sc-f-notes').value = '';
+
+      if (statusEl) statusEl.textContent = '✓ Ajoutée';
+      setTimeout(() => { if (statusEl) statusEl.textContent = ''; }, 2500);
+      showToast(`Société "${created.name}" créée`);
+    } catch (err) {
+      if (statusEl) statusEl.textContent = '✗ ' + err.message;
+      showToast('Erreur : ' + err.message);
+    } finally {
+      addBtn.disabled = false;
+    }
+  });
+}
+
 // ── mount / unmount ───────────────────────────────────────────
 let _root = null;
 
@@ -756,7 +1131,8 @@ export async function mount(container) {
       fetch('/api/ollama/models'),
     ]);
     _cfg = await cfgRes.json();
-    _models = await modRes.json();
+    const rawModels = await modRes.json();
+    _models = Array.isArray(rawModels) ? rawModels : [];
   } catch (e) {
     container.innerHTML = `<div class="s-loading">Erreur : ${e.message}</div>`;
     return;
@@ -766,6 +1142,7 @@ export async function mount(container) {
   _root = container;
   _bindEvents(container);
   _bindAuthEvents(container);
+  _bindSocieteEvents(container);
 
   // Show models count
   const countEl = container.querySelector('#models-count');
@@ -773,6 +1150,9 @@ export async function mount(container) {
 
   // Load own devices in auth panel
   _loadMyDevices(container);
+
+  // Populate installed models list
+  _loadModels(container);
 }
 
 export function unmount() {

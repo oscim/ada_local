@@ -77,12 +77,9 @@ pynvml>=13.0.0                 # NVIDIA GPU monitoring (VRAM display)
 huggingface-hub>=0.36.0        # Download models from Hugging Face
 
 # -----------------------------------------------------
-# Web Server & Auth
+# Local Data Storage
 # -----------------------------------------------------
-fastapi>=0.100.0               # Web framework
-uvicorn[standard]>=0.20.0      # ASGI server
-python-jose[cryptography]>=3.3.0 # JWT tokens (RS256/HS256)
-qrcode[pil]>=8.0               # QR code generation
+# SQLite is included with Python - no additional packages needed
 
 # -----------------------------------------------------
 # Development (Optional)

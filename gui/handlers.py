@@ -686,7 +686,9 @@ class ChatHandlers(QObject):
         self.ui_throttle_timer.setInterval(100) # 10 tokens per second or so
         self.ui_throttle_timer.timeout.connect(self._flush_ui_buffers)
         self.last_scroll_time = 0
-    
+        # MODULE_SOCIETE: contexte société injecté dans le system prompt
+        self._societe_context: str = ""
+
     def refresh_sidebar(self):
         """Reload the persistent sidebar with conversation history."""
         self.main_window.refresh_sidebar(self.current_session_id)
@@ -853,7 +855,44 @@ class ChatHandlers(QObject):
     def _on_status(self, text):
         self.main_window.set_status(text)
 
-    def _on_done(self):
+    # MODULE_SOCIETE: injection contexte société dans le system prompt
+    def set_societe_context(self, company_id: str) -> None:
+        """
+        # MODULE_SOCIETE: met à jour le contexte société injecté dans les messages.
+        Appelé quand l'utilisateur sélectionne une société dans ChatContextBar.
+        company_id == "" → réinitialise le contexte société.
+        """
+        from config import MODULES_ENABLED
+        if not MODULES_ENABLED.get("societe", False):
+            return
+
+        self._societe_context = ""
+        if company_id:
+            try:
+                from core.plugin_registry import plugin_registry
+                plugin = plugin_registry.get("societe")
+                if plugin:
+                    self._societe_context = plugin.get_chat_context(company_id)
+                    print(f"[Handlers] MODULE_SOCIETE: contexte injecté pour '{company_id}'")
+            except Exception as exc:
+                print(f"[Handlers] MODULE_SOCIETE: erreur contexte: {exc}")
+
+        # Reconstruire le system prompt avec le nouveau contexte
+        base_system = self.messages[0]["content"] if self.messages else ""
+        # Retirer l'ancien bloc société s'il existe
+        if "\n\n### Contexte société ###" in base_system:
+            base_system = base_system.split("\n\n### Contexte société ###")[0]
+
+        if self._societe_context:
+            new_system = base_system + f"\n\n### Contexte société ###\n{self._societe_context}"
+        else:
+            new_system = base_system
+
+        if self.messages:
+            self.messages[0]["content"] = new_system
+        print(f"[Handlers] MODULE_SOCIETE: system prompt mis à jour (societe={'oui' if company_id else 'non'})")
+
+
         self.ui_throttle_timer.stop()
         self._flush_ui_buffers() # Final final flush
         self._end_generation_state()
