@@ -694,6 +694,30 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   white-space:nowrap;
 }
 #toast.on{opacity:1;pointer-events:auto;}
+
+/* ── Plugin Context Bar ─────────────────────────────────────── */
+.ctx-uni-btn{display:flex;align-items:center;gap:4px;font-size:9px;font-weight:700;
+  padding:2px 8px;border-radius:12px;cursor:pointer;border:1px solid transparent;
+  opacity:.42;transition:all .14s;white-space:nowrap;font-family:"DM Sans",sans-serif;}
+.ctx-uni-btn.on{opacity:1;}
+.ctx-uni-btn:hover{opacity:.8;}
+.ctx-uni-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
+/* ── Carte de confirmation ──────────────────────────────────── */
+.confirm-card{background:var(--surface3);border:1px solid var(--border-hi);
+  border-left:3px solid var(--orange);border-radius:8px;padding:9px 11px;margin-top:7px;}
+.confirm-card .cc-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;
+  color:var(--orange);text-transform:uppercase;margin-bottom:5px;}
+.confirm-card .cc-msg{font-size:11px;font-family:"DM Mono",monospace;
+  color:var(--text);margin-bottom:8px;line-height:1.5;}
+.confirm-card .cc-btns{display:flex;gap:6px;}
+.cc-btn{padding:4px 12px;border-radius:6px;border:1px solid var(--border-hi);
+  background:transparent;font-family:"DM Sans",sans-serif;
+  font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;}
+.cc-btn.confirm{border-color:var(--green);color:var(--green);}
+.cc-btn.confirm:hover{background:rgba(34,212,144,.1);}
+.cc-btn.cancel{border-color:var(--red);color:var(--red);}
+.cc-btn.cancel:hover{background:rgba(240,64,96,.1);}
+.cc-btn:disabled{opacity:.4;cursor:default;}
 </style>
 </head>
 <body>
@@ -1101,10 +1125,9 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   </div>
 
   <div class="ctx-bar" id="ctx-bar">
-    <div class="ctx-tag ct-dash on" onclick="this.classList.toggle('on')">Dashboard</div>
-    <div class="ctx-tag ct-home on" onclick="this.classList.toggle('on')">Maison</div>
-    <div class="ctx-tag ct-co on" onclick="this.classList.toggle('on')">Société</div>
-    <div class="ctx-tag ct-plan" onclick="this.classList.toggle('on')">Planning</div>
+    <!-- Généré dynamiquement par _renderPluginCtxBar() -->
+    <span class="ctx-lbl">CONTEXTE ACTIF</span>
+    <div class="ctx-tag ct-dash on" style="pointer-events:none">Dashboard</div>
   </div>
 
   <div id="chat-msgs">
@@ -1231,7 +1254,7 @@ async function _onAuthenticated(){
   await _loadProfile();
   await _loadStatus();
   _loadSubView('uni-dash-content','dashboard');
-  _renderUniCtxBar&&_renderUniCtxBar('dash');
+  _renderPluginCtxBar('dash');
 }
 
 // ── Profil (thème + densité depuis /api/profile) ───────────────
@@ -1302,8 +1325,6 @@ async function sendMsg(){
   typing.classList.add('on');
   _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
 
-  // Contexte actif — toujours injecté selon l'univers courant
-  const ctx=_activeUni==='co'?_socCtxId:(_activeDomain||null);
   const histSlice=_history.slice(-10);
   const histForSend=_activeCtxText
     ?[{role:'user',content:`Contexte actif :\n${_activeCtxText}`},{role:'assistant',content:'Contexte pris en compte.'},...histSlice]
@@ -1315,19 +1336,19 @@ async function sendMsg(){
 
   try{
     const r=await fetch('/api/chat',{
-      method:'POST',
-      headers,
+      method:'POST',headers,
       body:JSON.stringify({
         message:t,
         history:histForSend,
-        company_context:ctx||null,
+        company_context:_activeUni==='co'?(_socCtxId||null):null,
+        plugin_context:_activePluginCtx||null,
+        context_id:_activeCtxId||null,
         context:`Univers: ${_activeUni}${_activeSub?' › '+_activeSub:''}`,
       }),
     });
     typing.classList.remove('on');
     if(!r.ok){_appendMsg('Erreur '+r.status,'ada');return;}
 
-    // Conteneur de la réponse en streaming
     const msgEl=document.createElement('div');
     msgEl.className='msg msg-ada';
     msgEl.innerHTML='<div class="from"></div><span class="_body"></span>';
@@ -1350,12 +1371,20 @@ async function sendMsg(){
         if(data==='[DONE]'){buf='';break;}
         try{
           const j=JSON.parse(data);
+          if(j.__type==='confirm_required'){
+            _appendConfirmCard(msgEl,j.func,j.message,JSON.parse(j.params||'{}'));
+            break;
+          }
+          if(j.img_url){
+            bodyEl.innerHTML+=`<img src="${j.img_url}" style="max-width:100%;border-radius:6px;margin-top:6px;display:block" loading="lazy">`;
+            _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+            continue;
+          }
           if(j.text){fullText+=j.text;bodyEl.innerHTML=fullText.replace(/\n/g,'<br>');_chatMsgs.scrollTop=_chatMsgs.scrollHeight;}
         }catch{}
       }
     }
     if(fullText)_history.push({role:'assistant',content:fullText});
-
   }catch(e){
     typing.classList.remove('on');
     _appendMsg('Erreur réseau : '+e.message,'ada');
@@ -1411,16 +1440,7 @@ function goUni(id,btn){
   _activeUni=id;_activeSub='';
   if(id==='dash') _loadSubView('uni-dash-content','dashboard');
   if(id==='co')   _loadSubView('uni-co','societe');
-  if(id==='co'){
-    // auto-sélectionner la première société si aucune n'est active
-    if(!_socCtxId&&_socCompanies.length>0){socSetCtx(null,_socCompanies[0].id);}
-    else _renderSocieteCtxBar();
-  } else {
-    const c=_UNI_CTX[id];
-    _activeCtxText=c?c.text||'':'';
-    _activeDomain=c?c.domain:null;
-    _renderUniCtxBar(id);
-  }
+  _renderPluginCtxBar(id);
 }
 
 // ── Sub-tabs ───────────────────────────────────────────────────
@@ -1607,7 +1627,7 @@ function _renderUniCtxBar(id){
   if(bar)bar.innerHTML='<span class="ctx-lbl">CONTEXTE ACTIF</span><div class="ctx-tag on" style="pointer-events:none">'+ctx.label+'</div>';
   if(qbar)qbar.innerHTML=ctx.qps.map(p=>'<button class="qp" onclick="inject(\''+p+'\')">'+ p+'</button>').join('');
 }
-function _renderDefaultCtxBar(){_renderUniCtxBar('dash');}
+function _renderDefaultCtxBar(){_renderPluginCtxBar('dash');}
 async function socSetCtx(btn,cid){
   _socCtxId=cid||null;
   _activeCtxText='';
@@ -1691,9 +1711,135 @@ function drawSparks(){
 setTimeout(drawSparks,100);
 window.addEventListener('resize',drawSparks);
 
+
+// ── Plugin Context Bar ───────────────────────────────────────────
+let _activePluginCtx=null,_activeCtxId=null,_pluginUniverses=null;
+
+const _UNI_META={
+  home:  {label:'Maison',     color:'#a888ff',bg:'rgba(168,136,255,.1)', border:'rgba(168,136,255,.28)'},
+  opent: {label:'OpenTechno', color:'#17c3e8',bg:'rgba(23,195,232,.08)',  border:'rgba(23,195,232,.25)'},
+  uscss: {label:'USCSS',      color:'#22d490',bg:'rgba(34,212,144,.08)',  border:'rgba(34,212,144,.22)'},
+  margep:{label:'MargePro',   color:'#ec4899',bg:'rgba(236,72,153,.08)',  border:'rgba(236,72,153,.22)'},
+  global:{label:'Global',     color:'#8899a8',bg:'rgba(136,153,168,.08)', border:'rgba(136,153,168,.2)'},
+};
+const _UNI_TO_PLUGIN={home:'home',co:'opent',plan:null,tools:null,dash:null};
+
+async function _fetchPluginUniverses(){
+  if(_pluginUniverses)return _pluginUniverses;
+  try{
+    const token=_getToken();
+    const h=token?{'Authorization':'Bearer '+token}:{};
+    const r=await fetch('/api/plugins/universes',{headers:h});
+    if(r.ok)_pluginUniverses=await r.json();
+  }catch{}
+  return _pluginUniverses||{};
+}
+
+async function _renderPluginCtxBar(uniId){
+  const bar=document.getElementById('ctx-bar');
+  const qbar=document.getElementById('quick-bar');
+  if(!bar)return;
+  if(uniId==='co'){_renderSocieteCtxBar();return;}
+
+  const localCtx=_UNI_CTX[uniId];
+  if(localCtx){_activeCtxText=localCtx.text||'';_activeDomain=localCtx.domain||uniId;}
+
+  const pluginUni=_UNI_TO_PLUGIN[uniId]||null;
+  _activePluginCtx=pluginUni;_activeCtxId=null;
+
+  const universes=await _fetchPluginUniverses();
+  let html='<span class="ctx-lbl">CONTEXTE ACTIF</span>';
+
+  if(pluginUni&&universes[pluginUni]){
+    const meta=_UNI_META[pluginUni]||_UNI_META.global;
+    html+=`<button class="ctx-uni-btn on"
+      style="background:${meta.bg};color:${meta.color};border-color:${meta.border}"
+      onclick="_togglePluginCtx('${pluginUni}',this)">
+      <span class="ctx-uni-dot" style="background:${meta.color}"></span>${meta.label}
+    </button>`;
+    universes[pluginUni].forEach(p=>{
+      html+=`<button class="ctx-tag ct-co" style="font-size:9px" title="${p.label}"
+        onclick="inject('${p.label} — état et alertes')">${p.icon}</button>`;
+    });
+  }else{
+    html+=`<div class="ctx-tag on" style="pointer-events:none">${localCtx?localCtx.label:'Dashboard'}</div>`;
+  }
+  bar.innerHTML=html;
+
+  if(pluginUni&&qbar){
+    try{
+      const token=_getToken();
+      const h=token?{'Authorization':'Bearer '+token}:{};
+      const r=await fetch(`/api/plugins/quick-prompts/all?universe=${pluginUni}`,{headers:h});
+      if(r.ok){
+        const data=await r.json();
+        const prompts=data.flatMap(d=>d.prompts||[]).slice(0,5);
+        if(prompts.length){
+          qbar.innerHTML=prompts.map(p=>`<button class="qp" onclick="inject('${p.replace(/'/g,"\\'")}')">${p}</button>`).join('');
+          return;
+        }
+      }
+    }catch{}
+  }
+  if(qbar&&localCtx&&localCtx.qps){
+    qbar.innerHTML=localCtx.qps.map(p=>`<button class="qp" onclick="inject('${p}')">${p}</button>`).join('');
+  }
+}
+
+function _togglePluginCtx(uni,btn){
+  const isOn=btn.classList.contains('on');
+  if(isOn){_activePluginCtx=null;btn.classList.remove('on');btn.style.opacity='.42';showToast('Contexte plugin désactivé');}
+  else{_activePluginCtx=uni;btn.classList.add('on');btn.style.opacity='1';showToast('Contexte '+(_UNI_META[uni]?.label||uni)+' actif');}
+}
+
+// ── Carte de confirmation ────────────────────────────────────────
+function _appendConfirmCard(msgEl,func,message,params){
+  const bodyEl=msgEl.querySelector('._body');
+  const card=document.createElement('div');
+  card.className='confirm-card';
+  const ps=JSON.stringify(JSON.stringify(params));
+  card.innerHTML=`<div class="cc-lbl">⚠ CONFIRMATION REQUISE</div>
+    <div class="cc-msg">${message}</div>
+    <div class="cc-btns">
+      <button class="cc-btn confirm" onclick="executeConfirmed(this,'${func}',${ps})">✓ Confirmer</button>
+      <button class="cc-btn cancel" onclick="cancelConfirm(this)">✕ Annuler</button>
+    </div>`;
+  (bodyEl||msgEl).appendChild(card);
+  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+}
+
+async function executeConfirmed(btn,func,paramsJson){
+  const card=btn.closest('.confirm-card');
+  const params=JSON.parse(paramsJson);
+  card.querySelectorAll('.cc-btn').forEach(b=>b.disabled=true);
+  card.querySelector('.cc-lbl').textContent='⏳ Exécution en cours…';
+  try{
+    const token=_getToken();
+    const r=await fetch('/api/plugins/confirm',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},
+      body:JSON.stringify({func,params}),
+    });
+    const result=await r.json();
+    if(result.success){
+      card.innerHTML=`<span style="color:var(--green)">✓ ${result.message||'Action exécutée.'}</span>`;
+      _history.push({role:'assistant',content:`Action ${func} confirmée : ${result.message||'succès'}`});
+    }else{
+      card.innerHTML=`<span style="color:var(--red)">✗ ${result.message||"Échec de l'action."}</span>`;
+    }
+  }catch(e){
+    card.innerHTML=`<span style="color:var(--red)">✗ Erreur réseau : ${e.message}</span>`;
+  }
+  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+}
+
+function cancelConfirm(btn){
+  btn.closest('.confirm-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
+}
+
 // ── Init ───────────────────────────────────────────────────────
 // Initialise le ctx-bar immédiatement (avant l'auth) pour éviter l'affichage des tags statiques
-try{_renderUniCtxBar('dash');}catch(e){}
+try{_renderPluginCtxBar('dash');}catch(e){}
 (async()=>{
   const ok=await _checkAuth();
   if(!ok){await _showAuth();}else{await _onAuthenticated();}
