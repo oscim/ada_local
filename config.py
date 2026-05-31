@@ -253,7 +253,12 @@ FUNCTIONS = [
 
 # MODULE_SOCIETE: feature flag — mettre à False pour désactiver entièrement le module
 MODULES_ENABLED: dict = {
-    "societe": True,
+    "societe":    True,
+    "domotique":  True,    # → DomotiquePlugin (univers: home)
+    "proxmox":    True,    # → ProxmoxPlugin (univers: opent)
+    "rmm":        True,    # → RmmPlugin (univers: opent)
+    "telephony":  False,   # → TelephonyPlugin (off par défaut)
+    "margepro":   True,    # → MargeProPlugin (univers: margep)
 }
 
 # --- Console Colors ---

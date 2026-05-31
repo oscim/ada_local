@@ -26,6 +26,12 @@ class BasePlugin(ABC):
     # Icône (emoji ou chemin ressource)
     icon: str = "🔌"
 
+    # Univers d'appartenance — "home" | "opent" | "uscss" | "margep" | "global"
+    universe: str = "global"
+
+    # Couleur d'accentuation hex pour l'UI
+    color: str = "#8b9bb4"
+
     @abstractmethod
     def get_nav_items(self) -> list[dict]:
         """
@@ -60,6 +66,51 @@ class BasePlugin(ABC):
 
     def on_disable(self) -> None:
         """Appelé quand le plugin est désactivé (optionnel)."""
+
+    # ── Nouvelles méthodes optionnelles ───────────────────────────────────────
+
+    def get_function_definitions(self) -> list[dict]:
+        """
+        Définitions de fonctions au format JSON Schema Ollama injectées dans
+        le tool-calling LLM quand le plugin est actif.
+        """
+        return []
+
+    def get_semantic_utterances(self) -> dict[str, list[str]]:
+        """
+        Utterances à fusionner dans le semantic_router.
+        Clé = route cible (ex: "function_gemma"), valeur = liste de phrases.
+        """
+        return {}
+
+    def get_n8n_webhooks(self) -> dict[str, str]:
+        """
+        Mapping action (kebab-case) → URL de webhook n8n.
+        """
+        return {}
+
+    def handle_action(self, action: str, params: dict) -> dict:
+        """
+        Exécution locale d'une action (fallback si n8n indisponible).
+        Retourne { success: bool, message: str, data: Any }.
+        N'est appelé que si l'action figure dans get_function_definitions()
+        ET que n8n est indisponible ou ne couvre pas cette action.
+        """
+        return {"success": False, "message": f"Action {action} non implémentée", "data": None}
+
+    def get_system_prompt_injection(self, context_id: str | None = None) -> str:
+        """
+        Bloc texte injecté dans le system prompt du LLM quand ce plugin est actif.
+        Décrit les capacités d'action disponibles.
+        """
+        return ""
+
+    def get_dashboard_kpis(self) -> list[dict]:
+        """
+        KPIs à afficher dans le dashboard global.
+        Chaque KPI : { id, label, value, unit?, trend?, color?, tab_link? }
+        """
+        return []
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -115,6 +166,47 @@ class PluginRegistry:
         parts = [p.get_chat_context(company_id) for p in self._plugins.values()]
         return "\n\n".join(p for p in parts if p.strip())
 
+    def combined_function_definitions(self) -> list[dict]:
+        """Agrège toutes les function definitions des plugins actifs."""
+        definitions = []
+        for p in self._plugins.values():
+            definitions.extend(p.get_function_definitions())
+        return definitions
+
+    def combined_n8n_webhooks(self) -> dict[str, str]:
+        """Agrège les webhooks de tous les plugins actifs."""
+        webhooks: dict[str, str] = {}
+        for p in self._plugins.values():
+            webhooks.update(p.get_n8n_webhooks())
+        return webhooks
+
+    def combined_system_prompt_injection(self, context_id: str | None = None) -> str:
+        """Agrège les injections system prompt de tous les plugins actifs."""
+        parts = [p.get_system_prompt_injection(context_id) for p in self._plugins.values()]
+        return "\n\n".join(p for p in parts if p.strip())
+
+    def dispatch_action(self, action: str, params: dict) -> dict | None:
+        """
+        Cherche le plugin qui déclare cette action dans get_function_definitions().
+        Retourne None si aucun plugin ne la reconnaît (fallback FunctionExecutor).
+        """
+        for p in self._plugins.values():
+            func_names = [
+                f["function"]["name"]
+                for f in p.get_function_definitions()
+            ]
+            if action in func_names:
+                return p.handle_action(action, params)
+        return None
+
+    def combined_semantic_utterances(self) -> dict[str, list[str]]:
+        """Agrège les utterances de tous les plugins actifs pour le semantic_router."""
+        result: dict[str, list[str]] = {}
+        for p in self._plugins.values():
+            for route, utterances in p.get_semantic_utterances().items():
+                result.setdefault(route, []).extend(utterances)
+        return result
+
 
 # Singleton global
 plugin_registry = PluginRegistry()
@@ -124,19 +216,52 @@ plugin_registry = PluginRegistry()
 
 def register_enabled_plugins() -> None:
     """
-    # MODULE_SOCIETE: appelé au démarrage de l'app.
-    Enregistre uniquement les plugins dont le flag est True dans MODULES_ENABLED.
-    settings_store.modules.societe prend la priorité sur config.MODULES_ENABLED.
+    Enregistre les plugins dont le flag est True dans MODULES_ENABLED.
+    settings_store.modules.<key> prend la priorité sur config.MODULES_ENABLED.
     """
     from config import MODULES_ENABLED  # import tardif pour éviter la circularité
     from core.settings_store import settings as _settings
 
-    # MODULE_SOCIETE: settings_store prime sur config.py
-    store_val = _settings.get("modules.societe")
-    societe_enabled = store_val if store_val is not None else MODULES_ENABLED.get("societe", False)
+    def _is_enabled(key: str) -> bool:
+        store_val = _settings.get(f"modules.{key}")
+        return store_val if store_val is not None else MODULES_ENABLED.get(key, False)
 
-    if societe_enabled:
+    # MODULE_SOCIETE
+    if _is_enabled("societe"):
         from core.societe.plugin import SocietePlugin
         plugin_registry.register(SocietePlugin())
     else:
-        print("[PluginRegistry] Module 'societe' désactivé — aucun plugin societe chargé")
+        print("[PluginRegistry] Module 'societe' désactivé")
+
+    # MODULE_DOMOTIQUE
+    if _is_enabled("domotique"):
+        from core.domotique.plugin import DomotiquePlugin
+        plugin_registry.register(DomotiquePlugin())
+    else:
+        print("[PluginRegistry] Module 'domotique' désactivé")
+
+    # MODULE_PROXMOX
+    if _is_enabled("proxmox"):
+        from core.infra.plugin import ProxmoxPlugin
+        plugin_registry.register(ProxmoxPlugin())
+    else:
+        print("[PluginRegistry] Module 'proxmox' désactivé")
+
+    # MODULE_RMM
+    if _is_enabled("rmm"):
+        from core.rmm.plugin import RmmPlugin
+        plugin_registry.register(RmmPlugin())
+    else:
+        print("[PluginRegistry] Module 'rmm' désactivé")
+
+    # MODULE_TELEPHONY
+    if _is_enabled("telephony"):
+        from core.telephony.plugin import TelephonyPlugin
+        plugin_registry.register(TelephonyPlugin())
+
+    # MODULE_MARGEPRO
+    if _is_enabled("margepro"):
+        from core.margepro.plugin import MargeProPlugin
+        plugin_registry.register(MargeProPlugin())
+    else:
+        print("[PluginRegistry] Module 'margepro' désactivé")

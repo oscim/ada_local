@@ -134,10 +134,23 @@ async def _startup() -> None:
         _auth_db_init()
     # Initialise les profils d'affichage (tables + seed)
     _profiles_init()
-    # MODULE_SOCIETE: enregistrement des plugins au démarrage web
-    if _MODULES_ENABLED.get("societe", False):
-        from core.plugin_registry import register_enabled_plugins
-        register_enabled_plugins()
+    # MODULE_SOCIETE: enregistrement des plugins au démarrage web (tous modules)
+    from core.plugin_registry import register_enabled_plugins, plugin_registry as _plugin_registry
+    register_enabled_plugins()
+    # Enrichir le semantic_router avec les utterances des plugins
+    try:
+        from core.semantic_router import inject_plugin_utterances as _inject_utt
+        _inject_utt(_plugin_registry.combined_semantic_utterances())
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Server] inject_plugin_utterances: %s", _e)
+    # Enregistrer les webhooks n8n des plugins
+    try:
+        from core.n8n_executor import n8n_executor as _n8n
+        _n8n.register_plugin_webhooks(_plugin_registry.combined_n8n_webhooks())
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Server] register_plugin_webhooks: %s", _e)
     # MODULE_SKILLS: initialisation DB skills FTS5 + seed + maintenance
     try:
         _skills_init_db()

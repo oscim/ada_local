@@ -8,7 +8,23 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from PySide6.QtCore import QObject, Signal
+try:
+    from PySide6.QtCore import QObject, Signal
+    _QT_AVAILABLE = True
+except ImportError:
+    _QT_AVAILABLE = False
+
+    class _NoSignal:
+        """No-op Signal stub when PySide6 is not available."""
+        def __init__(self, *args): pass
+        def emit(self, *args): pass
+        def connect(self, *args): pass
+        def disconnect(self, *args): pass
+
+    Signal = _NoSignal  # type: ignore
+
+    class QObject:  # type: ignore
+        pass
 
 
 # Default settings - used when no settings file exists

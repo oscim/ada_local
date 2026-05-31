@@ -447,3 +447,33 @@ def warmup() -> None:
         logger.info("[SemanticRouter] Ready (embedding router, nomic-embed-text).")
     else:
         logger.warning("[SemanticRouter] Ready (keyword fallback — Ollama unavailable).")
+
+
+def inject_plugin_utterances(extra: dict[str, list[str]]) -> None:
+    """
+    Fusionne des utterances supplémentaires dans _ROUTES (et le _KeywordFallback).
+    Appelé au démarrage après register_enabled_plugins().
+    Invalide le cache d'embeddings pour forcer le recalcul.
+    """
+    if not extra:
+        return
+    for route, utterances in extra.items():
+        if route in _ROUTES:
+            _ROUTES[route].extend(utterances)
+        else:
+            _ROUTES[route] = list(utterances)
+    _invalidate_embedding_cache()
+    # Reconstruire le _KeywordFallback avec les nouvelles utterances
+    _router._keyword = _KeywordFallback()
+    logger.info(
+        "[SemanticRouter] inject_plugin_utterances: %d routes, %d utterances ajoutées",
+        len(extra),
+        sum(len(v) for v in extra.values()),
+    )
+
+
+def _invalidate_embedding_cache() -> None:
+    """Vide le cache d'embeddings pour forcer le recalcul au prochain appel route()."""
+    with _router._lock:
+        _router._cache = {}
+        _router._last_retry = 0.0

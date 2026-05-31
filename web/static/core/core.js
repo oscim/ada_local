@@ -159,12 +159,12 @@ export function setInputBarVisible(v) {
 
 // ── Sidebar ─────────────────────────────────────────────────────
 export function closeSidebar() {
-  sidebar.classList.remove('open');
-  sidebarOverlay.classList.remove('open');
+  sidebar?.classList.remove('open');
+  sidebarOverlay?.classList.remove('open');
 }
 function openSidebar() {
-  sidebar.classList.add('open');
-  sidebarOverlay.classList.add('open');
+  sidebar?.classList.add('open');
+  sidebarOverlay?.classList.add('open');
 }
 
 menuBtn?.addEventListener('click', openSidebar);

@@ -1,7 +1,7 @@
 /* ADA Mobile — Service Worker
    Cache the app shell for offline support */
 
-const CACHE = "ada-v13";
+const CACHE = "ada-v14";
 // Seuls les assets vraiment statiques sont mis en cache.
 // Les JS/CSS des views sont toujours rechargés depuis le réseau
 // pour éviter les problèmes de cache en développement.
