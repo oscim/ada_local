@@ -397,3 +397,34 @@ select.s-input {
 .sc-emoji { max-width: 72px !important; text-align: center; font-size: 1.1rem; }
 .sc-color { max-width: 52px !important; min-width: 52px !important; padding: 2px 4px; cursor: pointer; }
 .sc-notes { min-height: 50px; resize: vertical; font-family: inherit; }
+
+/* MODULE_DOCUMENTS: stats grid */
+.doc-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: .5rem;
+  margin-top: .25rem;
+}
+.doc-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: .5rem .75rem;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.07);
+  border-radius: 8px;
+  text-align: center;
+}
+.doc-stat-n {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: rgba(255,255,255,.9);
+  font-variant-numeric: tabular-nums;
+}
+.doc-stat-l {
+  font-size: .7rem;
+  color: #64748b;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}

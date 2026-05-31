@@ -58,6 +58,42 @@ async def list_plugins():
     ]
 
 
+# ── Catalogue de tous les modules (actifs ou non) ────────────────────────────
+# Source de vérité unique côté serveur. Ajouter ici tout nouveau plugin.
+PLUGIN_CATALOG = [
+    {"key": "domotique",    "label": "Domotique",      "icon": "🏠", "sub": "HA, Kasa, Domoticz"},
+    {"key": "proxmox",      "label": "Infrastructure", "icon": "🖥️", "sub": "Proxmox, VMs, NAS"},
+    {"key": "rmm",          "label": "RMM Clients",    "icon": "🔧", "sub": "Gestion postes clients"},
+    {"key": "telephony",    "label": "Téléphonie",     "icon": "📞", "sub": "IPBX, lignes SIP"},
+    {"key": "print3d",      "label": "Impression 3D",  "icon": "🖨️", "sub": "K1, OctoPrint…"},
+    {"key": "music",        "label": "Musique",        "icon": "🎵", "sub": "Navidrome"},
+    {"key": "bibliotheque", "label": "Bibliothèque",   "icon": "📚", "sub": "Calibre-Web"},
+    {"key": "societe",      "label": "Sociétés CRM",   "icon": "🏢", "sub": "Tableau de bord"},
+    {"key": "margepro",     "label": "MargePro",       "icon": "💰", "sub": "Calcul marges"},
+]
+
+
+@router.get("/catalog")
+async def plugin_catalog():
+    """
+    Retourne la liste de tous les modules déclarés (actifs ou non)
+    avec leur état courant depuis MODULES_ENABLED + registry.
+    Utilisé par le panneau Plugins des paramètres.
+    """
+    from config import MODULES_ENABLED
+    return [
+        {
+            "key":     entry["key"],
+            "label":   entry["label"],
+            "icon":    entry["icon"],
+            "sub":     entry["sub"],
+            "enabled": MODULES_ENABLED.get(entry["key"], False),
+            "loaded":  plugin_registry.is_active(entry["key"]),
+        }
+        for entry in PLUGIN_CATALOG
+    ]
+
+
 @router.get("/universes")
 async def list_universes():
     """Liste les univers actifs avec leurs plugins regroupés."""

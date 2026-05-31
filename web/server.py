@@ -14,7 +14,7 @@ from pathlib import Path
 # Assurer que la racine du projet est dans sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
@@ -112,6 +112,10 @@ if _MODULES_ENABLED.get("societe", False):
 from web.router_plugins import router as _plugins_router
 app.include_router(_plugins_router)
 
+# MODULE_DOCUMENTS: base documentaire RAG locale — toujours monté, guard interne
+from web.router_documents import router as _documents_router
+app.include_router(_documents_router)
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -127,6 +131,9 @@ class _NoCacheStaticFiles(StaticFiles):
 
 app.mount("/static", _NoCacheStaticFiles(directory=str(_STATIC)), name="static")
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -163,6 +170,17 @@ async def _startup() -> None:
     except Exception as _e:
         import logging as _log
         _log.getLogger(__name__).warning("[Skills] Erreur init : %s", _e)
+    # MODULE_DOCUMENTS: initialisation DB documentaire + indexation si activé
+    try:
+        from core.documents.documents_db import init_db as _docs_init_db
+        _docs_init_db()
+        from core.settings_store import settings as _settings_ref
+        if _settings_ref.get("documents.enabled", False) and _settings_ref.get("documents.auto_index_on_startup", True):
+            from core.documents.documents_indexer import index_all as _docs_index
+            _docs_index(force=False)
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Documents] Erreur init : %s", _e)
     # Ping périodique des services infra (built-in + custom endpoints) toutes les 90s
     import asyncio as _aio
     async def _infra_poller():

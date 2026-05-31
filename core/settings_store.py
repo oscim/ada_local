@@ -125,6 +125,26 @@ DEFAULT_SETTINGS = {
         "print3d": True,
         "music": True,
         "bibliotheque": True,
+        "proxmox": True,
+        "rmm": True,
+    },
+    # MODULE_DOCUMENTS: base documentaire RAG locale (Markdown + SQLite FTS5)
+    "documents": {
+        "enabled": False,
+        "root_path": "",
+        "require_mount": True,
+        "expected_mount_path": "",
+        "expected_device_hint": "",
+        "index_path": "",
+        "extensions": [".md"],
+        "ignore_dirs": [".git", "node_modules", "__pycache__", ".venv", "venv"],
+        "auto_index_on_startup": True,
+        "chunk_size": 1200,
+        "chunk_overlap": 200,
+        "max_context_chunks": 6,
+        "max_context_chars": 9000,
+        "min_query_length": 3,
+        "include_sources_in_answer": True,
     },
 }
 

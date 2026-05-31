@@ -119,34 +119,20 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   }
   /* Topbar épurée : masquer pills, density, thèmes, horloge */
   .tb-status,.density-row,.theme-row,.clock{display:none!important;}
-
-  /* Content : occupe col 2, row 2, pleine hauteur */
-  #content{
-    grid-column:2;grid-row:2;
-    overflow-y:auto;
-    height:calc(100svh - var(--topbar-h));
-    min-height:0;
-  }
-
-  /* Chat : même cellule que #content, caché par défaut */
+  #content{overflow-y:auto;}
   #chat{
-    grid-column:2;grid-row:2;
-    display:none;
-    flex-direction:column;
-    height:calc(100svh - var(--topbar-h));
-    overflow:hidden;
-    border-left:none;
-    position:static;
+    position:fixed;
+    top:var(--topbar-h);right:0;
+    bottom:0;
+    padding-bottom:env(safe-area-inset-bottom,0px);
+    width:min(340px,92vw);z-index:200;
+    background:var(--surface);
+    transform:translateX(110%);
+    transition:transform .28s cubic-bezier(.4,0,.2,1);
+    box-shadow:-4px 0 28px rgba(0,0,0,.55);
   }
-  /* Chat ouvert → remplace #content */
-  html.chat-open #content{display:none;}
-  html.chat-open #chat{display:flex;}
-
-  /* Icône toggle : ← quand chat ouvert */
-  html.chat-open #chat-toggle-mob{font-size:18px;}
-
-  /* Backdrop, toggle desktop et hidden inutiles en mobile */
-  #chat-backdrop{display:none!important;}
+  #app.chat-open #chat{transform:translateX(0);}
+  #app.chat-open #chat-backdrop{display:block;}
   #chat-toggle{display:none;}
   #chat-toggle-mob{display:flex;}
   #app.chat-hidden{grid-template-columns:var(--nav-w) 1fr;}
@@ -180,7 +166,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 }
 .tb-crumb-uni{color:var(--text);font-size:var(--fs-lg,14px);font-weight:600;}
 .tb-crumb-sep{opacity:.35;font-size:10px;}
-.tb-status{display:flex;align-items:center;gap:6px;padding:0 12px;flex:1;min-width:0;}
+.tb-status{display:flex;align-items:center;gap:6px;padding:0 12px;flex:1;}
 .status-pill{
   display:flex;align-items:center;gap:4px;
   font-family:'DM Mono',monospace;font-size:10px;color:var(--text-mid);
@@ -188,14 +174,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   background:var(--surface2);
 }
 .status-pill b{color:var(--text);font-weight:500;}
-.status-pill b.c-orange{color:var(--orange);}
-.status-pill b.c-red{color:var(--red);}
 .s-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
 .dot-g{background:var(--green);box-shadow:0 0 5px var(--green);}
 .dot-o{background:var(--orange);}
 .dot-r{background:var(--red);box-shadow:0 0 5px var(--red);}
 .dot-a{background:var(--accent);}
-.tb-right{display:flex;align-items:center;gap:8px;margin-left:auto;flex-shrink:0;}
+.tb-right{display:flex;align-items:center;gap:8px;}
 .clock{
   font-family:'DM Mono',monospace;font-size:11px;color:var(--text-mid);text-align:right;
 }
@@ -644,15 +628,12 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 }
 #chat-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--glow);}
 #chat-input::placeholder{color:var(--text-dim);}
-.send-btn,.icon-btn{
+.send-btn{
   width:32px;height:32px;border-radius:7px;border:1px solid var(--border-hi);
   background:transparent;color:var(--text-dim);cursor:pointer;font-size:12px;
-  display:flex;align-items:center;justify-content:center;transition:all .13s;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;transition:all .13s;
 }
-.send-btn:hover,.icon-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--glow);}
-.icon-btn.active{color:var(--accent);border-color:var(--accent);}
-.icon-btn.listening{color:#f55;border-color:#f55;animation:pulse-mic .7s infinite alternate;}
-@keyframes pulse-mic{from{box-shadow:0 0 0 0 rgba(255,85,85,.4);}to{box-shadow:0 0 0 5px rgba(255,85,85,0);}}
+.send-btn:hover{color:var(--accent);border-color:var(--accent);background:var(--glow);}
 
 /* ═══════════════════════════════════════════
    MINI DASH (when chat expanded)
@@ -718,17 +699,23 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 .ctx-uni-btn{display:flex;align-items:center;gap:4px;font-size:9px;font-weight:700;
   padding:2px 8px;border-radius:12px;cursor:pointer;border:1px solid transparent;
   opacity:.42;transition:all .14s;white-space:nowrap;font-family:"DM Sans",sans-serif;}
-.ctx-uni-btn.on{opacity:1;}
-.ctx-uni-btn:hover{opacity:.8;}
+.ctx-uni-btn.on{opacity:1;}.ctx-uni-btn:hover{opacity:.8;}
 .ctx-uni-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0;}
-/* ── Carte de confirmation ──────────────────────────────────── */
-.confirm-card{background:var(--surface3);border:1px solid var(--border-hi);
-  border-left:3px solid var(--orange);border-radius:8px;padding:9px 11px;margin-top:7px;}
-.confirm-card .cc-lbl{font-size:9px;font-weight:700;letter-spacing:.08em;
-  color:var(--orange);text-transform:uppercase;margin-bottom:5px;}
-.confirm-card .cc-msg{font-size:11px;font-family:"DM Mono",monospace;
-  color:var(--text);margin-bottom:8px;line-height:1.5;}
-.confirm-card .cc-btns{display:flex;gap:6px;}
+
+/* ── Carte de confirmation dynamique ────────────────────────── */
+.confirm-card{
+  background:var(--surface3);border:1px solid var(--border-hi);
+  border-left:3px solid var(--orange);
+  border-radius:8px;padding:9px 11px;margin-top:7px;
+  animation:fi .18s ease;
+}
+.cc-lbl{font-size:9px;font-weight:700;letter-spacing:.1em;color:var(--orange);
+  text-transform:uppercase;margin-bottom:4px;display:flex;align-items:center;gap:5px;}
+.cc-cmd{font-family:"DM Mono",monospace;font-size:10px;color:var(--text);
+  background:rgba(255,255,255,.04);border:1px solid var(--border);
+  border-radius:5px;padding:5px 8px;margin:5px 0 8px;word-break:break-all;line-height:1.5;}
+.cc-msg{font-size:11px;color:var(--text-mid);margin-bottom:7px;}
+.cc-btns{display:flex;gap:6px;}
 .cc-btn{padding:4px 12px;border-radius:6px;border:1px solid var(--border-hi);
   background:transparent;font-family:"DM Sans",sans-serif;
   font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;}
@@ -736,8 +723,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 .cc-btn.confirm:hover{background:rgba(34,212,144,.1);}
 .cc-btn.cancel{border-color:var(--red);color:var(--red);}
 .cc-btn.cancel:hover{background:rgba(240,64,96,.1);}
-.cc-btn:disabled{opacity:.4;cursor:default;}
-.confirm-card .cc-cmd{display:block;font-family:'DM Mono',monospace;font-size:10px;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);border-radius:5px;padding:4px 8px;margin:5px 0;white-space:pre-wrap;word-break:break-all;}
+.cc-btn:disabled{opacity:.38;cursor:default;}
 </style>
 </head>
 <body>
@@ -754,11 +740,11 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   </div>
 
   <div class="tb-status">
-    <div class="status-pill" id="pill-llm"><div class="s-dot dot-g pulse"></div>LLM <b>Mistral</b></div>
-    <div class="status-pill sys-pill" id="pill-cpu">CPU <b id="val-cpu">…</b></div>
-    <div class="status-pill sys-pill" id="pill-ram">RAM <b id="val-ram">…</b></div>
-    <div class="status-pill sys-pill" id="pill-gpu">GPU <b id="val-gpu">—</b></div>
-    <div class="status-pill sys-pill" id="pill-vram">VRAM <b id="val-vram">—</b></div>
+    <div class="status-pill"><div class="s-dot dot-g pulse"></div>LLM <b>Mistral</b></div>
+    <div class="status-pill"><div class="s-dot dot-g"></div>Domo <b>144</b></div>
+    <div class="status-pill"><div class="s-dot dot-g"></div>Proxmox <b>12/12</b></div>
+    <div class="status-pill"><div class="s-dot dot-o"></div>Alertes <b>3</b></div>
+    <div class="status-pill"><div class="s-dot dot-a"></div>Tél. <b>4 lignes</b></div>
   </div>
 
   <div class="tb-right">
@@ -833,16 +819,52 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 
   <!-- ── DASHBOARD ── -->
   <div class="uni-panel on" id="uni-dash">
-    <div class="subtab-bar">
-      <div class="stab on" onclick="goSub(this,'sub-dash-overview')">Vue d'ensemble</div>
-      <div class="stab" onclick="goSub(this,'sub-dash-alerts')">Alertes</div>
-      <div class="stab" onclick="goSub(this,'sub-dash-scenes')">Scènes rapides</div>
-    </div>
-    <!-- Vue d'ensemble : chargée dynamiquement par le module dashboard -->
-    <div class="subview on" id="sub-dash-overview"></div>
-    <!-- Alertes croisées -->
-    <div class="subview" id="sub-dash-alerts">
-      <div class="alert-feed" style="padding:var(--sp2,14px)">
+    <div class="subview on" id="uni-dash-content" style="padding:var(--sp2,14px)">
+
+      <div class="sec">KPIs temps réel</div>
+      <div class="dash-grid">
+        <div class="kpi" style="--k-c:#a888ff" onclick="inject('État des appareils domotique')">
+          <div class="kpi-l">Appareils actifs</div>
+          <div class="kpi-v c-accent">144</div>
+          <div class="kpi-s">+3 depuis hier</div>
+        </div>
+        <div class="kpi" style="--k-c:var(--accent)" onclick="inject('État des serveurs Proxmox')">
+          <div class="kpi-l">Serveurs online</div>
+          <div class="kpi-v c-green">12<span style="font-size:13px;color:var(--text-dim)">/12</span></div>
+          <div class="kpi-s">Proxmox · VMs · LXC</div>
+        </div>
+        <div class="kpi" style="--k-c:var(--orange)" onclick="inject('Résumé des alertes actives')">
+          <div class="kpi-l">Alertes actives</div>
+          <div class="kpi-v c-orange">3</div>
+          <div class="kpi-s">2 RMM · 1 réseau</div>
+        </div>
+        <div class="kpi" style="--k-c:var(--green)" onclick="inject('Rapport backups de la nuit')">
+          <div class="kpi-l">Backups 24h</div>
+          <div class="kpi-v c-green">✓</div>
+          <div class="kpi-s">18/18 réussis</div>
+        </div>
+      </div>
+
+      <div class="spark-row">
+        <div class="spark-card">
+          <div class="sk-l">CPU Proxmox</div>
+          <div class="sk-v c-accent">16%</div>
+          <canvas class="spark" id="sp1"></canvas>
+        </div>
+        <div class="spark-card">
+          <div class="sk-l">RAM</div>
+          <div class="sk-v c-orange">9.4 GB</div>
+          <canvas class="spark" id="sp2"></canvas>
+        </div>
+        <div class="spark-card">
+          <div class="sk-l">Bande passante</div>
+          <div class="sk-v c-green">0.3 GB</div>
+          <canvas class="spark" id="sp3"></canvas>
+        </div>
+      </div>
+
+      <div class="sec" style="margin-top:var(--sp2)">Flux alertes — tous univers</div>
+      <div class="alert-feed">
         <div class="alert-row warn" onclick="inject('Détaille l\'alerte RMM Dupont SA')">
           <div class="al-ico">⚠</div>
           <div class="al-body">
@@ -859,6 +881,14 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
             <div class="al-foot"><span class="utag utag-co">Société</span><span class="al-time">il y a 23 min</span></div>
           </div>
         </div>
+        <div class="alert-row info" onclick="inject('État réseau domestique')">
+          <div class="al-ico">ℹ</div>
+          <div class="al-body">
+            <div class="al-title">Switch salon redémarré</div>
+            <div class="al-desc">192.168.1.25 · uptime 0:04:12 · normal</div>
+            <div class="al-foot"><span class="utag utag-home">Maison</span><span class="al-time">il y a 41 min</span></div>
+          </div>
+        </div>
         <div class="alert-row ok">
           <div class="al-ico">✓</div>
           <div class="al-body">
@@ -868,10 +898,8 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
           </div>
         </div>
       </div>
-    </div>
-    <!-- Scènes rapides -->
-    <div class="subview" id="sub-dash-scenes" style="padding:var(--sp2,14px)">
-      <div class="sec">Scènes rapides</div>
+
+      <div class="sec" style="margin-top:var(--sp2)">Scènes rapides</div>
       <div class="scene-row">
         <button class="scene-btn on" onclick="inject('Active le mode Focus');this.classList.toggle('on')">🎯 Focus</button>
         <button class="scene-btn" onclick="inject('Active le mode Relax');this.classList.toggle('on')">🌊 Relax</button>
@@ -879,6 +907,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
         <button class="scene-btn" onclick="inject('Éteins toutes les lumières')">💡 Lumières off</button>
         <button class="scene-btn" onclick="inject('Lance un rapport complet')">📊 Rapport</button>
       </div>
+
     </div>
   </div>
 
@@ -964,15 +993,12 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   <!-- ── SOCIÉTÉ ── -->
   <div class="uni-panel" id="uni-co">
     <div class="subtab-bar">
-      <div class="stab on" onclick="goSub(this,'sub-soc')">Sociétés</div>
-      <div class="stab" onclick="goSub(this,'sub-infra')">Infrastructure</div>
+      <div class="stab on" onclick="goSub(this,'sub-infra')">Infrastructure</div>
       <div class="stab" onclick="goSub(this,'sub-rmm')">RMM Clients</div>
       <div class="stab" onclick="goSub(this,'sub-tel')">Téléphonie</div>
       <div class="stab" onclick="goSub(this,'sub-mkt')">Marketing</div>
     </div>
-    <!-- Sociétés : chargée dynamiquement par le module societe -->
-    <div class="subview on" id="sub-soc"></div>
-    <div class="subview" id="sub-infra">
+    <div class="subview on" id="sub-infra">
       <div class="sec">Nœuds infrastructure</div>
       <div class="node-grid">
         <div class="node"><div class="nd nd-ok"></div><div><div class="nn">Proxmox Node 1</div><div class="ns">CPU 18% · 12/32GB</div></div></div>
@@ -1105,7 +1131,6 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   </div>
 
   <div class="ctx-bar" id="ctx-bar">
-    <!-- Généré dynamiquement par _renderPluginCtxBar() -->
     <span class="ctx-lbl">CONTEXTE ACTIF</span>
     <div class="ctx-tag ct-dash on" style="pointer-events:none">Dashboard</div>
   </div>
@@ -1142,10 +1167,8 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   </div>
 
   <div class="chat-input-row">
-    <button id="mic-btn" class="icon-btn" title="Micro" onclick="toggleMic()">🎤</button>
     <textarea id="chat-input" placeholder="Demande à ADA…" rows="1"
       onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-    <button id="tts-btn" class="icon-btn" title="Voix" onclick="toggleTts()"><span id="tts-on">🔊</span><span id="tts-off" style="display:none">🔇</span></button>
     <button class="send-btn" onclick="sendMsg()">▶</button>
   </div>
 </div>
@@ -1259,51 +1282,23 @@ async function _loadProfile(){
   }catch{}
 }
 
-// ── Status pills (/api/dashboard) ───────────────────────────────
-function _pctClass(p){ return p>=85?'c-red':p>=65?'c-orange':''; }
+// ── Status pills (/api/status) ─────────────────────────────────
 async function _loadStatus(){
   try{
     const token=_getToken();
     const h=token?{'Authorization':'Bearer '+token}:{};
-    const [st, d] = await Promise.all([
-      fetch('/api/status',{headers:h}).then(r=>r.json()).catch(()=>({})),
-      fetch('/api/dashboard',{headers:h}).then(r=>r.json()).catch(()=>null),
-    ]);
-    // LLM pill
-    const llmPill=document.getElementById('pill-llm');
-    if(llmPill){
-      const dot=llmPill.querySelector('.s-dot');
-      const b=llmPill.querySelector('b');
-      const ok=st.ollama==='online';
+    const s=await fetch('/api/status',{headers:h}).then(r=>r.json());
+    // Pilule LLM (première pilule)
+    const pill=document.querySelector('.status-pill');
+    if(pill){
+      const dot=pill.querySelector('.s-dot');
+      const b=pill.querySelector('b');
+      const ok=s.ollama==='online';
       if(dot){dot.className='s-dot '+(ok?'dot-g pulse':'dot-r');}
-      if(b){b.textContent=ok?(st.model||'Mistral').replace(':latest',''):'Offline';}
-    }
-    // Métriques système
-    if(d){
-      const cpu=d.cpu_pct??0;
-      const ram=d.ram;
-      const vram=d.vram;
-      const vc=document.getElementById('val-cpu');
-      if(vc){vc.textContent=cpu+'%';vc.className=_pctClass(cpu);}
-      const vr=document.getElementById('val-ram');
-      if(vr && ram){
-        vr.textContent=ram.pct+'% ('+ram.used_gb+'/'+ram.total_gb+' GB)';
-        vr.className=_pctClass(ram.pct);
-      }
-      const vg=document.getElementById('val-gpu');
-      const vv=document.getElementById('val-vram');
-      if(vram){
-        const gpuPct=vram.total_gb>0?Math.round(vram.used_gb/vram.total_gb*100):0;
-        if(vg){vg.textContent=gpuPct+'%';vg.className=_pctClass(gpuPct);}
-        if(vv){vv.textContent=vram.used_gb+'/'+vram.total_gb+' GB';vv.className=_pctClass(gpuPct);}
-      } else {
-        if(vg){vg.textContent='—';vg.className='';}
-        if(vv){vv.textContent='—';vv.className='';}
-      }
+      if(b){b.textContent=ok?'Mistral':'Offline';}
     }
   }catch{}
 }
-setInterval(_loadStatus, 10000);
 
 // ── Chat SSE ───────────────────────────────────────────────────
 const _chatMsgs=document.getElementById('chat-msgs');
@@ -1335,9 +1330,12 @@ async function sendMsg(){
   typing.classList.add('on');
   _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
 
+  /* ── Contexte actif (univers + société) ── */
   const histSlice=_history.slice(-10);
   const histForSend=_activeCtxText
-    ?[{role:'user',content:`Contexte actif :\n${_activeCtxText}`},{role:'assistant',content:'Contexte pris en compte.'},...histSlice]
+    ?[{role:'user',content:`Contexte actif :\n${_activeCtxText}`},
+      {role:'assistant',content:'Contexte pris en compte.'},
+      ...histSlice]
     :histSlice;
 
   const token=_getToken();
@@ -1359,6 +1357,7 @@ async function sendMsg(){
     typing.classList.remove('on');
     if(!r.ok){_appendMsg('Erreur '+r.status,'ada');return;}
 
+    /* ── Conteneur streaming ── */
     const msgEl=document.createElement('div');
     msgEl.className='msg msg-ada';
     msgEl.innerHTML='<div class="from"></div><span class="_body"></span>';
@@ -1368,9 +1367,9 @@ async function sendMsg(){
 
     const reader=r.body.getReader();
     const decoder=new TextDecoder();
-    let buf='',fullText='';
+    let buf='',fullText='',confirmed=false;
 
-    while(true){
+    outer:while(true){
       const{done,value}=await reader.read();
       if(done)break;
       buf+=decoder.decode(value,{stream:true});
@@ -1378,109 +1377,215 @@ async function sendMsg(){
       for(const line of lines){
         if(!line.startsWith('data:'))continue;
         const data=line.slice(5).trim();
-        if(data==='[DONE]'){buf='';break;}
+        if(data==='[DONE]'){buf='';break outer;}
         try{
           const j=JSON.parse(data);
+
+          /* ── Confirmation requise ─────────────────────── */
           if(j.__type==='confirm_required'){
-            _appendConfirmCard(msgEl,j.func,j.message,JSON.parse(j.params||'{}'),j.cmd||'');
-            break;
+            _insertConfirmCard(msgEl,j.func,j.message,j.params,j.cmd||null);
+            confirmed=true;
+            break outer;
           }
+
+          /* ── Image inline ────────────────────────────── */
           if(j.img_url){
-            bodyEl.innerHTML+=`<img src="${j.img_url}" style="max-width:100%;border-radius:6px;margin-top:6px;display:block" loading="lazy">`;
+            bodyEl.innerHTML+=`<img src="${j.img_url}"
+              style="max-width:100%;border-radius:6px;margin-top:6px;display:block"
+              loading="lazy">`;
             _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
             continue;
           }
-          if(j.text){fullText+=j.text;bodyEl.innerHTML=fullText.replace(/\n/g,'<br>');_chatMsgs.scrollTop=_chatMsgs.scrollHeight;}
+
+          /* ── Texte streaming ─────────────────────────── */
+          if(j.text){
+            fullText+=j.text;
+            bodyEl.innerHTML=_md(fullText);
+            _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+          }
+          if(j.error){
+            bodyEl.textContent='⚠ '+j.error;
+            break outer;
+          }
         }catch{}
       }
     }
-    if(fullText){ _history.push({role:'assistant',content:fullText}); _speakIfEnabled(fullText); }
+    if(fullText&&!confirmed)_history.push({role:'assistant',content:fullText});
   }catch(e){
     typing.classList.remove('on');
     _appendMsg('Erreur réseau : '+e.message,'ada');
   }
 }
 
-function confirmAct(btn){
-  btn.closest('.action-card').innerHTML='<span style="color:var(--green)">✓ Confirmé — exécution en cours…</span>';
-  setTimeout(()=>_appendMsg('Backup lancé ✓ — Job #4821 · durée estimée 12 min.','ada'),1200);
+/* ── Rendu markdown minimal ─────────────────────────────────── */
+function _md(t){
+  return t
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/`([^`]+)`/g,'<code style="background:rgba(255,255,255,.07);padding:1px 5px;border-radius:3px">$1</code>')
+    .replace(/\n/g,'<br>');
 }
+
+/* ══════════════════════════════════════════════════════════════
+   SYSTÈME DE CONFIRMATION — actions système critiques
+   Toute action marquée x_confirm_required dans les plugins
+   passe par ce flow : carte affichée → user confirme → POST /confirm
+══════════════════════════════════════════════════════════════ */
+
+/* Insérer une carte de confirmation dans la bulle ADA courante */
+function _insertConfirmCard(msgEl, func, message, paramsJson, cmd){
+  const bodyEl = msgEl.querySelector('._body');
+  const safeParams = JSON.stringify(typeof paramsJson==='string'?paramsJson:JSON.stringify(paramsJson));
+  const safeFunc   = func.replace(/'/g,"\\'");
+  const cmdBlock   = cmd
+    ? `<div class="cc-cmd">${cmd.replace(/</g,'&lt;')}</div>`
+    : '';
+  const card = document.createElement('div');
+  card.className = 'confirm-card';
+  card.innerHTML = `
+    <div class="cc-lbl">⚠ ACTION EN ATTENTE</div>
+    <div class="cc-msg">${message}</div>
+    ${cmdBlock}
+    <div class="cc-btns">
+      <button class="cc-btn confirm" onclick="confirmAct(this,'${safeFunc}',${safeParams})">✓ Confirmer</button>
+      <button class="cc-btn cancel"  onclick="cancelAct(this)">✕ Annuler</button>
+    </div>`;
+  (bodyEl || msgEl).appendChild(card);
+  _chatMsgs.scrollTop = _chatMsgs.scrollHeight;
+}
+
+/* Confirmation → POST /api/plugins/confirm */
+async function confirmAct(btn, func, paramsJson){
+  /* Compat ancien code statique (0 args) */
+  if(!func){
+    btn.closest('.action-card,.confirm-card').innerHTML='<span style="color:var(--green)">✓ Confirmé — exécution en cours…</span>';
+    setTimeout(()=>_appendMsg('Backup lancé ✓ — Job #4821 · durée estimée 12 min.','ada'),1200);
+    return;
+  }
+  const card = btn.closest('.confirm-card');
+  const params = JSON.parse(paramsJson);
+  card.querySelectorAll('.cc-btn').forEach(b=>b.disabled=true);
+  card.querySelector('.cc-lbl').textContent='⏳ Exécution en cours…';
+
+  try{
+    const token=_getToken();
+    const r=await fetch('/api/plugins/confirm',{
+      method:'POST',
+      headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},
+      body:JSON.stringify({func,params}),
+    });
+    const res=await r.json();
+    if(res.success){
+      card.innerHTML=`<span style="color:var(--green)">✓ ${res.message||'Action exécutée.'}</span>`;
+      _history.push({role:'assistant',content:`Action ${func} confirmée : ${res.message||'succès'}`});
+      showToast('✓ '+( res.message||'Action exécutée'));
+    } else if(res.confirm_required){
+      /* L'action demande une re-confirmation (edge case) */
+      card.querySelector('.cc-lbl').textContent='⚠ ACTION EN ATTENTE';
+      card.querySelectorAll('.cc-btn').forEach(b=>b.disabled=false);
+    } else {
+      card.innerHTML=`<span style="color:var(--red)">✗ ${res.message||"Échec de l'action."}</span>`;
+    }
+  }catch(e){
+    card.innerHTML=`<span style="color:var(--red)">✗ Erreur réseau : ${e.message}</span>`;
+  }
+  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+}
+
 function cancelAct(btn){
-  btn.closest('.action-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
+  const card=btn.closest('.action-card,.confirm-card');
+  if(card)card.innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
 }
 
-// ── TTS / STT ─────────────────────────────────────────────────
-let _ttsEnabled = localStorage.getItem('ada-tts') !== 'false';
-let _recognition = null;
-let _sttInited = false;
+/* ══════════════════════════════════════════════════════════════
+   PLUGIN CONTEXT BAR
+   Chargée depuis /api/plugins/universes au changement d'univers
+   Quick-prompts depuis /api/plugins/quick-prompts/all?universe=X
+══════════════════════════════════════════════════════════════ */
+let _activePluginCtx=null, _activeCtxId=null, _pluginUniverses=null;
 
-function _updateTtsBtn(){
-  const btn=document.getElementById('tts-btn');
-  const on=document.getElementById('tts-on');
-  const off=document.getElementById('tts-off');
-  if(!btn)return;
-  btn.classList.toggle('active', _ttsEnabled);
-  if(on) on.style.display = _ttsEnabled ? '' : 'none';
-  if(off) off.style.display = _ttsEnabled ? 'none' : '';
-  btn.title = _ttsEnabled ? 'Désactiver la voix' : 'Activer la voix';
+const _UNI_META={
+  home:  {label:'Maison',    color:'#a888ff',bg:'rgba(168,136,255,.1)', bd:'rgba(168,136,255,.28)'},
+  opent: {label:'OpenTechno',color:'#17c3e8',bg:'rgba(23,195,232,.08)',  bd:'rgba(23,195,232,.25)'},
+  uscss: {label:'USCSS',     color:'#22d490',bg:'rgba(34,212,144,.08)',  bd:'rgba(34,212,144,.22)'},
+  margep:{label:'MargePro',  color:'#ec4899',bg:'rgba(236,72,153,.08)',  bd:'rgba(236,72,153,.22)'},
+  global:{label:'Global',    color:'#8899a8',bg:'rgba(136,153,168,.06)', bd:'rgba(136,153,168,.18)'},
+};
+/* Mapping univers UI → univers plugin */
+const _UNI_TO_PLUGIN={home:'home',co:'opent',plan:null,tools:null,dash:null};
+
+async function _fetchPluginUniverses(){
+  if(_pluginUniverses)return _pluginUniverses;
+  try{
+    const h=_getToken()?{'Authorization':'Bearer '+_getToken()}:{};
+    const r=await fetch('/api/plugins/universes',{headers:h});
+    if(r.ok)_pluginUniverses=await r.json();
+  }catch{}
+  return _pluginUniverses||{};
 }
 
-function toggleTts(){
-  _ttsEnabled = !_ttsEnabled;
-  localStorage.setItem('ada-tts', _ttsEnabled);
-  _updateTtsBtn();
-  showToast(_ttsEnabled ? '🔊 Voix activée' : '🔇 Voix désactivée');
-}
+async function _renderPluginCtxBar(uniId){
+  const bar=document.getElementById('ctx-bar');
+  const qbar=document.getElementById('quick-bar');
+  if(!bar)return;
 
-function _speakIfEnabled(text){
-  if(!_ttsEnabled || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
-  for(const s of sentences){
-    const u = new SpeechSynthesisUtterance(s.trim());
-    u.lang = navigator.language || 'fr-FR';
-    u.rate = 1.05;
-    window.speechSynthesis.speak(u);
-  }
-}
+  /* Déléguer à la société si univers "co" */
+  if(uniId==='co'){_renderSocieteCtxBar();return;}
 
-function _initSTT(){
-  if(_sttInited) return;
-  _sttInited = true;
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const micBtn = document.getElementById('mic-btn');
-  if(!SR){ if(micBtn){ micBtn.disabled=true; micBtn.title='Web Speech non supporté'; } return; }
-  _recognition = new SR();
-  _recognition.lang = navigator.language || 'fr-FR';
-  _recognition.interimResults = false;
-  _recognition.maxAlternatives = 1;
-  _recognition.onresult = (e) => {
-    const t = e.results[0][0].transcript;
-    const inp = document.getElementById('chat-input');
-    inp.value = t; autoResize(inp); sendMsg();
-  };
-  _recognition.onerror = (e) => {
-    if(micBtn) micBtn.classList.remove('listening');
-    if(e.error==='not-allowed') showToast('⛔ Accès micro refusé');
-    else if(e.error!=='no-speech') showToast('Micro : ' + e.error);
-  };
-  _recognition.onend = () => { if(micBtn) micBtn.classList.remove('listening'); };
-}
+  const localCtx=_UNI_CTX[uniId];
+  if(localCtx){_activeCtxText=localCtx.text||'';_activeDomain=localCtx.domain||uniId;}
+  const pluginUni=_UNI_TO_PLUGIN[uniId]||null;
+  _activePluginCtx=pluginUni; _activeCtxId=null;
 
-function toggleMic(){
-  _initSTT();
-  const micBtn = document.getElementById('mic-btn');
-  if(!micBtn) return;
-  if(micBtn.classList.contains('listening')){
-    _recognition?.stop();
+  const universes=await _fetchPluginUniverses();
+  let html='<span class="ctx-lbl">CONTEXTE ACTIF</span>';
+
+  if(pluginUni&&universes[pluginUni]){
+    const m=_UNI_META[pluginUni]||_UNI_META.global;
+    html+=`<button class="ctx-uni-btn on"
+      style="background:${m.bg};color:${m.color};border-color:${m.bd}"
+      onclick="_togglePluginCtx('${pluginUni}',this)">
+      <span class="ctx-uni-dot" style="background:${m.color}"></span>${m.label}
+    </button>`;
+    (universes[pluginUni]||[]).forEach(p=>{
+      html+=`<button class="ctx-tag ct-co" style="font-size:9px" title="${p.label}"
+        onclick="inject('${p.label} — état et alertes')">${p.icon}</button>`;
+    });
   } else {
-    micBtn.classList.add('listening');
-    try { _recognition?.start(); } catch { micBtn.classList.remove('listening'); }
+    html+=`<div class="ctx-tag on" style="pointer-events:none">${localCtx?localCtx.label:'Dashboard'}</div>`;
   }
+  bar.innerHTML=html;
+
+  /* Quick-prompts depuis l'API plugins, fallback locaux */
+  if(pluginUni&&qbar){
+    try{
+      const h=_getToken()?{'Authorization':'Bearer '+_getToken()}:{};
+      const r=await fetch(`/api/plugins/quick-prompts/all?universe=${pluginUni}`,{headers:h});
+      if(r.ok){
+        const data=await r.json();
+        const prompts=data.flatMap(d=>d.prompts||[]).slice(0,5);
+        if(prompts.length){
+          qbar.innerHTML=prompts.map(p=>`<button class="qp" onclick="inject('${p.replace(/'/g,"\\'")}')">${p}</button>`).join('');
+          return;
+        }
+      }
+    }catch{}
+  }
+  if(qbar&&localCtx?.qps)
+    qbar.innerHTML=localCtx.qps.map(p=>`<button class="qp" onclick="inject('${p}')">${p}</button>`).join('');
 }
 
-// Initialiser les boutons au chargement
-document.addEventListener('DOMContentLoaded', () => { _updateTtsBtn(); _initSTT(); });
+function _togglePluginCtx(uni,btn){
+  const isOn=btn.classList.contains('on');
+  _activePluginCtx=isOn?null:uni;
+  btn.classList.toggle('on',!isOn);
+  btn.style.opacity=isOn?'.42':'1';
+  showToast(isOn?'Contexte plugin désactivé':'Contexte '+(_UNI_META[uni]?.label||uni)+' actif');
+}
+
+function _renderDefaultCtxBar(){_renderPluginCtxBar('dash');}
+
+
 
 // ── Clock ──────────────────────────────────────────────────────
 function tick(){
@@ -1521,16 +1626,9 @@ function goUni(id,btn){
   document.getElementById('bc-sep').style.display='none';
   document.getElementById('bc-sub').style.display='none';
   _activeUni=id;_activeSub='';
-  if(id==='dash'){ _loadSubView('sub-dash-overview','dashboard'); }
-  else if(panel){
-    // Auto-charge le premier sous-onglet pour les autres univers (home, plan, tools…)
-    const firstStab=panel.querySelector('.stab');
-    if(firstStab){
-      const onclickAttr=firstStab.getAttribute('onclick');
-      const match=onclickAttr&&onclickAttr.match(/goSub\(this,'([^']+)'\)/);
-      if(match) goSub(firstStab, match[1]);
-    }
-  }
+  if(id==='dash') _loadSubView('uni-dash-content','dashboard');
+  if(id==='co')   _loadSubView('uni-co','societe');
+  if(id==='co'&&!_socCtxId&&_socCompanies.length>0){socSetCtx(null,_socCompanies[0].id);}
   _renderPluginCtxBar(id);
 }
 
@@ -1543,8 +1641,6 @@ function goSub(el,subId){
   const sub=document.getElementById(subId);
   if(sub)sub.classList.add('on');
   const labels={
-    'sub-soc':'Sociétés',
-    'sub-dash-overview':"Vue d'ensemble",'sub-dash-alerts':'Alertes','sub-dash-scenes':'Scènes rapides',
     'sub-domo':'Domotique','sub-cameras':'Caméras','sub-membres':'Membres','sub-courses':'Courses',
     'sub-infra':'Infrastructure','sub-rmm':'RMM Clients','sub-tel':'Téléphonie','sub-mkt':'Marketing',
     'sub-briefing':'Briefing','sub-agenda':'Agenda',
@@ -1555,8 +1651,6 @@ function goSub(el,subId){
   if(labels[subId]){sep.style.display='';sub_el.style.display='';sub_el.textContent=labels[subId];}
   _activeSub=labels[subId]||subId;
   const _VM={
-    'sub-soc':           ['societe',   {}],
-    'sub-dash-overview': ['dashboard', {}],
     'sub-cameras':  ['cameras',  {}],
     'sub-mkt':      ['marketing',{}],
     'sub-mem':      ['memory',   {}],
@@ -1575,10 +1669,8 @@ function goSub(el,subId){
 let chatHidden=false;
 function toggleChat(){
   const app=document.getElementById('app');
-  if(window.matchMedia('(max-width:768px)').matches){
-    const open=document.documentElement.classList.toggle('chat-open');
-    const btn=document.getElementById('chat-toggle-mob');
-    if(btn)btn.textContent=open?'✕':'💬';
+  if(window.innerWidth<=768){
+    app.classList.toggle('chat-open');
   }else{
     chatHidden=!chatHidden;
     app.classList.toggle('chat-hidden',chatHidden);
@@ -1679,7 +1771,7 @@ const _V2U={
   briefing: ['plan','sub-briefing'],
   planner:  ['plan','sub-agenda'],
   memory:   ['tools','sub-mem'],
-  societe:  ['co','sub-soc'],
+  societe:  'co',
 };
 // ── Contextes par univers ─────────────────────────────────────────
 const _UNI_CTX={
@@ -1807,133 +1899,6 @@ function drawSparks(){
 }
 setTimeout(drawSparks,100);
 window.addEventListener('resize',drawSparks);
-
-
-// ── Plugin Context Bar ───────────────────────────────────────────
-let _activePluginCtx=null,_activeCtxId=null,_pluginUniverses=null;
-
-const _UNI_META={
-  home:  {label:'Maison',     color:'#a888ff',bg:'rgba(168,136,255,.1)', border:'rgba(168,136,255,.28)'},
-  opent: {label:'OpenTechno', color:'#17c3e8',bg:'rgba(23,195,232,.08)',  border:'rgba(23,195,232,.25)'},
-  uscss: {label:'USCSS',      color:'#22d490',bg:'rgba(34,212,144,.08)',  border:'rgba(34,212,144,.22)'},
-  margep:{label:'MargePro',   color:'#ec4899',bg:'rgba(236,72,153,.08)',  border:'rgba(236,72,153,.22)'},
-  global:{label:'Global',     color:'#8899a8',bg:'rgba(136,153,168,.08)', border:'rgba(136,153,168,.2)'},
-};
-const _UNI_TO_PLUGIN={home:'home',co:'opent',plan:null,tools:null,dash:null};
-
-async function _fetchPluginUniverses(){
-  if(_pluginUniverses)return _pluginUniverses;
-  try{
-    const token=_getToken();
-    const h=token?{'Authorization':'Bearer '+token}:{};
-    const r=await fetch('/api/plugins/universes',{headers:h});
-    if(r.ok)_pluginUniverses=await r.json();
-  }catch{}
-  return _pluginUniverses||{};
-}
-
-async function _renderPluginCtxBar(uniId){
-  const bar=document.getElementById('ctx-bar');
-  const qbar=document.getElementById('quick-bar');
-  if(!bar)return;
-  if(uniId==='co'){_renderSocieteCtxBar();return;}
-
-  const localCtx=_UNI_CTX[uniId];
-  if(localCtx){_activeCtxText=localCtx.text||'';_activeDomain=localCtx.domain||uniId;}
-
-  const pluginUni=_UNI_TO_PLUGIN[uniId]||null;
-  _activePluginCtx=pluginUni;_activeCtxId=null;
-
-  const universes=await _fetchPluginUniverses();
-  let html='<span class="ctx-lbl">CONTEXTE ACTIF</span>';
-
-  if(pluginUni&&universes[pluginUni]){
-    const meta=_UNI_META[pluginUni]||_UNI_META.global;
-    html+=`<button class="ctx-uni-btn on"
-      style="background:${meta.bg};color:${meta.color};border-color:${meta.border}"
-      onclick="_togglePluginCtx('${pluginUni}',this)">
-      <span class="ctx-uni-dot" style="background:${meta.color}"></span>${meta.label}
-    </button>`;
-    universes[pluginUni].forEach(p=>{
-      html+=`<button class="ctx-tag ct-co" style="font-size:9px" title="${p.label}"
-        onclick="inject('${p.label} — état et alertes')">${p.icon}</button>`;
-    });
-  }else{
-    html+=`<div class="ctx-tag on" style="pointer-events:none">${localCtx?localCtx.label:'Dashboard'}</div>`;
-  }
-  bar.innerHTML=html;
-
-  if(pluginUni&&qbar){
-    try{
-      const token=_getToken();
-      const h=token?{'Authorization':'Bearer '+token}:{};
-      const r=await fetch(`/api/plugins/quick-prompts/all?universe=${pluginUni}`,{headers:h});
-      if(r.ok){
-        const data=await r.json();
-        const prompts=data.flatMap(d=>d.prompts||[]).slice(0,5);
-        if(prompts.length){
-          qbar.innerHTML=prompts.map(p=>`<button class="qp" onclick="inject('${p.replace(/'/g,"\\'")}')">${p}</button>`).join('');
-          return;
-        }
-      }
-    }catch{}
-  }
-  if(qbar&&localCtx&&localCtx.qps){
-    qbar.innerHTML=localCtx.qps.map(p=>`<button class="qp" onclick="inject('${p}')">${p}</button>`).join('');
-  }
-}
-
-function _togglePluginCtx(uni,btn){
-  const isOn=btn.classList.contains('on');
-  if(isOn){_activePluginCtx=null;btn.classList.remove('on');btn.style.opacity='.42';showToast('Contexte plugin désactivé');}
-  else{_activePluginCtx=uni;btn.classList.add('on');btn.style.opacity='1';showToast('Contexte '+(_UNI_META[uni]?.label||uni)+' actif');}
-}
-
-// ── Carte de confirmation ────────────────────────────────────────
-function _appendConfirmCard(msgEl,func,message,params,cmd){
-  const bodyEl=msgEl.querySelector('._body');
-  const card=document.createElement('div');
-  card.className='confirm-card';
-  const ps=JSON.stringify(JSON.stringify(params));
-  card.innerHTML=`<div class="cc-lbl">⚠ CONFIRMATION REQUISE</div>
-    <div class="cc-msg">${message}</div>
-    ${cmd?`<code class="cc-cmd">${cmd}</code>`:''}
-    <div class="cc-btns">
-      <button class="cc-btn confirm" onclick="executeConfirmed(this,'${func}',${ps})">✓ Confirmer</button>
-      <button class="cc-btn cancel" onclick="cancelConfirm(this)">✕ Annuler</button>
-    </div>`;
-  (bodyEl||msgEl).appendChild(card);
-  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
-}
-
-async function executeConfirmed(btn,func,paramsJson){
-  const card=btn.closest('.confirm-card');
-  const params=JSON.parse(paramsJson);
-  card.querySelectorAll('.cc-btn').forEach(b=>b.disabled=true);
-  card.querySelector('.cc-lbl').textContent='⏳ Exécution en cours…';
-  try{
-    const token=_getToken();
-    const r=await fetch('/api/plugins/confirm',{
-      method:'POST',
-      headers:{'Content-Type':'application/json',...(token?{'Authorization':'Bearer '+token}:{})},
-      body:JSON.stringify({func,params}),
-    });
-    const result=await r.json();
-    if(result.success){
-      card.innerHTML=`<span style="color:var(--green)">✓ ${result.message||'Action exécutée.'}</span>`;
-      _history.push({role:'assistant',content:`Action ${func} confirmée : ${result.message||'succès'}`});
-    }else{
-      card.innerHTML=`<span style="color:var(--red)">✗ ${result.message||"Échec de l'action."}</span>`;
-    }
-  }catch(e){
-    card.innerHTML=`<span style="color:var(--red)">✗ Erreur réseau : ${e.message}</span>`;
-  }
-  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
-}
-
-function cancelConfirm(btn){
-  btn.closest('.confirm-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
-}
 
 // ── Init ───────────────────────────────────────────────────────
 // Initialise le ctx-bar immédiatement (avant l'auth) pour éviter l'affichage des tags statiques

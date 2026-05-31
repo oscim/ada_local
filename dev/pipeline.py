@@ -629,18 +629,18 @@ async def _call_with_tools(
         confirm_msg = func_def["function"].get(
             "x_confirm_message", f"Confirmer {func_name} ?"
         )
-        confirm_cmd = func_def["function"].get("x_confirm_cmd", "")
-        # Interpoler les {param} avec les valeurs réelles
-        try:
-            confirm_msg = confirm_msg.format(**params)
-        except Exception:
-            pass
-        try:
-            if confirm_cmd:
-                confirm_cmd = confirm_cmd.format(**params)
-        except Exception:
-            pass
-        return f"__confirm__{func_name}|{confirm_msg}|{json.dumps(params)}|{confirm_cmd}"
+        # Construire la commande affichée depuis x_confirm_cmd ou depuis les params
+        cmd_template = func_def["function"].get("x_confirm_cmd", "")
+        if cmd_template and params:
+            try:
+                cmd_display = cmd_template.format(**params)
+            except Exception:
+                cmd_display = cmd_template
+        elif params:
+            cmd_display = f"{func_name}({', '.join(f'{k}={v}' for k, v in params.items())})"
+        else:
+            cmd_display = func_name
+        return f"__confirm__{func_name}|{confirm_msg}|{json.dumps(params)}|{cmd_display}"
 
     # ── Dispatch : plugin → n8n → function_executor ───────────────────────────
     plugin_result = _pr.dispatch_action(func_name, params)
@@ -846,14 +846,6 @@ async def process_message(
 
     # Injection des skills + mémoire long terme, comme l'app
     messages = skill_manager.inject(messages, user_text)
-
-    # MODULE_DOCUMENTS: injection RAG documentaire (entre skills et mémoire)
-    try:
-        from core.documents.documents_injector import inject_documentation
-        messages, _doc_meta = inject_documentation(messages, user_text, context_id=_effective_ctx)
-    except Exception:
-        pass
-
     mem = memory_store.build_context(user_text, current_session_id=session_id)
     if mem:
         # Injecter la mémoire comme échange user/assistant fictif en début d'historique.
