@@ -38,7 +38,22 @@ from core.runtime_state import runtime_state
 from core.skill_manager import skill_manager
 from core.settings_store import settings
 from web.pipeline import process_message
+# MODULE_SKILLS: module de mémoire procédurale SQLite FTS5
+from core.skills import (
+    init_db as _skills_init_db,
+    seed_from_files as _skills_seed,
+    run_maintenance as _skills_maintenance,
+    list_skills as _skills_list,
+    get_skill as _skills_get,
+    save_skill as _skills_save,
+    delete_skill as _skills_delete,
+    archive_skill as _skills_archive,
+    restore_skill as _skills_restore,
+    promote_skill as _skills_promote,
+)
 from web.router_auth import router as _auth_router
+from web.router_profiles import router as _profiles_router
+from core.routes.profiles import initialize as _profiles_init
 
 # ---------------------------------------------------------------------------
 # Routes toujours publiques (même quand l'auth est activée)
@@ -85,6 +100,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
 app.add_middleware(_AuthMiddleware)
 app.include_router(_auth_router)
+app.include_router(_profiles_router)
 
 # MODULE_SOCIETE: guard — router branché uniquement si module actif
 from config import MODULES_ENABLED as _MODULES_ENABLED
@@ -116,10 +132,20 @@ async def _startup() -> None:
     if settings.get("auth.enabled", False):
         from web.auth_db import initialize as _auth_db_init
         _auth_db_init()
+    # Initialise les profils d'affichage (tables + seed)
+    _profiles_init()
     # MODULE_SOCIETE: enregistrement des plugins au démarrage web
     if _MODULES_ENABLED.get("societe", False):
         from core.plugin_registry import register_enabled_plugins
         register_enabled_plugins()
+    # MODULE_SKILLS: initialisation DB skills FTS5 + seed + maintenance
+    try:
+        _skills_init_db()
+        _skills_seed()
+        _skills_maintenance()
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Skills] Erreur init : %s", _e)
     # Ping périodique des services infra (built-in + custom endpoints) toutes les 90s
     import asyncio as _aio
     async def _infra_poller():
@@ -727,6 +753,43 @@ async def page_infrastructure():
     """État infrastructure pour la page desktop dédiée."""
     runtime_state.refresh()
     return runtime_state.get_infra_summary()
+
+
+# ---------------------------------------------------------------------------
+# Contrôle direct des entités domotiques
+# ---------------------------------------------------------------------------
+
+class _EntityToggle(BaseModel):
+    on: Optional[bool] = None   # None = toggle, True = allume, False = éteint
+
+@app.post("/api/entity/{entity_id}/toggle")
+async def entity_toggle(entity_id: str, body: _EntityToggle):
+    """Allume / éteint une entité domotique via le service unifié."""
+    import asyncio
+    from core.unified_entities import unified_entity_service
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(
+        None,
+        lambda: unified_entity_service.toggle_entity(entity_id, body.on)
+    )
+    return {"ok": ok, "entity_id": entity_id, "on": body.on}
+
+@app.post("/api/scene/{scene_name}")
+async def scene_activate(scene_name: str):
+    """Active une scène HA (scene.<scene_name>) ou tombe en silence si absente."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    ok = False
+    try:
+        from core.ha_control import ha_manager
+        ha_entity = f"scene.{scene_name}"
+        ok = await loop.run_in_executor(
+            None,
+            lambda: ha_manager.call_service("scene", "turn_on", ha_entity)
+        )
+    except Exception as e:
+        print(f"[scene_activate] {scene_name}: {e}")
+    return {"ok": ok, "scene": scene_name}
 
 
 # ---------------------------------------------------------------------------
@@ -1457,3 +1520,83 @@ async def get_tagged_items(company_id: str):
                   "details": live_services.get(ep["name"], {}).get("details", "")} for ep in raw_eps]
     marketing = [h for h in get_history(limit=200) if company_id in h.get("tags", [])]
     return {"endpoints": endpoints, "marketing": marketing}
+
+
+# ---------------------------------------------------------------------------
+# MODULE_SKILLS: API AutoSkills (SQLite FTS5)
+# Préfixe /api/autoskills/ pour éviter le conflit avec /api/skills (SKILL.md)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/autoskills")
+async def api_skills_list(status: str = "active", domain: str | None = None):
+    """Liste les autoskills selon status (active|archived) et domaine optionnel."""
+    return {"skills": _skills_list(status=status, domain=domain)}
+
+
+@app.get("/api/autoskills/{skill_id}")
+async def api_skills_get(skill_id: str):
+    """Récupère une autoskill par ID."""
+    skill = _skills_get(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    return skill
+
+
+@app.post("/api/autoskills")
+async def api_skills_create(body: dict):
+    """Crée ou met à jour une autoskill."""
+    name = body.get("name", "").strip()
+    content = body.get("content", "").strip()
+    if not name or not content:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name et content requis")
+    skill_id = _skills_save(
+        name=name,
+        content=content,
+        domain=body.get("domain", "core"),
+        source=body.get("source", "manual"),
+        summary=body.get("summary", ""),
+        priority=int(body.get("priority", 5)),
+        skill_id=body.get("id"),
+    )
+    return {"id": skill_id, "ok": True}
+
+
+@app.patch("/api/autoskills/{skill_id}/archive")
+async def api_skills_archive(skill_id: str):
+    """Archive une autoskill."""
+    ok = _skills_archive(skill_id)
+    return {"ok": ok}
+
+
+@app.patch("/api/autoskills/{skill_id}/restore")
+async def api_skills_restore(skill_id: str):
+    """Restaure une autoskill archivée."""
+    ok = _skills_restore(skill_id)
+    return {"ok": ok}
+
+
+@app.patch("/api/autoskills/{skill_id}/promote")
+async def api_skills_promote(skill_id: str, body: dict | None = None):
+    """Monte la priorité d'une autoskill."""
+    new_priority = (body or {}).get("priority")
+    ok = _skills_promote(skill_id, new_priority=new_priority)
+    return {"ok": ok}
+
+
+@app.delete("/api/autoskills/{skill_id}")
+async def api_skills_delete(skill_id: str):
+    """Supprime une autoskill (refusé si protégée)."""
+    ok = _skills_delete(skill_id)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Skill protégée ou introuvable")
+    return {"ok": True}
+
+
+@app.post("/api/autoskills/maintenance")
+async def api_skills_maintenance():
+    """Lance la maintenance manuelle des autoskills."""
+    result = _skills_maintenance()
+    return result

@@ -297,55 +297,112 @@ function _renderHome(data, el) {
   const entities  = data.entities  || [];
   const providers = data.providers || [];
 
-  if (!entities.length) {
-    el.innerHTML = '<section class="page-panel"><p class="page-muted">Aucune entité domotique trouvée. Vérifiez la configuration des providers (HA, Kasa, Domoticz).</p></section>';
-    return;
-  }
+  // ── Icônes et labels ─────────────────────────────────────────────────────
+  const _SC  = { connected:'var(--green)', online:'var(--green)', disconnected:'#ff3b5c', offline:'#ff3b5c', error:'#ff3b5c', unknown:'#ffa500' };
+  const _PI  = { kasa:'🔌', home_assistant:'🏠', domoticz:'🏗' };
+  const _TI  = { light:'💡', switch:'🔌', media_player:'🎵', sensor:'🌡', binary_sensor:'📡', camera:'📷' };
+  const _TL  = { sensor:'Capteurs', binary_sensor:'Capteurs binaires', media_player:'Lecteurs', camera:'Caméras', unknown:'Autres' };
 
-  // Statut providers
-  const provHtml = providers.map((p) => {
-    const dot = p.status === 'connected' ? 'online' : p.status === 'disconnected' ? 'offline' : 'unknown';
-    return `<div class="page-status-row"><span><i class="page-dot ${dot}"></i>${escapeHtml(p.name)}</span><b>${escapeHtml(p.status || '?')}</b></div>`;
+  // ── 1. Barre providers ───────────────────────────────────────────────────
+  const provBadges = providers.map(p => {
+    const c = _SC[p.status] || '#888';
+    return `<span class="domo-prov-badge">
+      <i style="width:7px;height:7px;border-radius:50%;background:${c};display:inline-block;flex-shrink:0;vertical-align:middle"></i>
+      ${_PI[p.id] || '📡'} ${escapeHtml(p.name)}
+      <span style="color:${c};font-size:9px;margin-left:3px">${escapeHtml(p.status || '?')}</span>
+    </span>`;
   }).join('');
 
-  // Grouper par type
-  const TYPE_LABELS = { light: 'Lumières', switch: 'Switches', media_player: 'Lecteurs', sensor: 'Capteurs', binary_sensor: 'Capteurs binaires', camera: 'Caméras', unknown: 'Autres' };
-  const STATE_ICON  = { on: '🟢', off: '⚫', playing: '▶️', unavailable: '🔴' };
-
-  const byType = {};
-  for (const e of entities) {
-    const t = e.type || 'unknown';
-    if (!byType[t]) byType[t] = [];
-    byType[t].push(e);
-  }
-
-  // Priorité d'affichage
-  const TYPE_ORDER = ['light', 'switch', 'media_player', 'sensor', 'binary_sensor', 'camera', 'unknown'];
-  const sortedTypes = [
-    ...TYPE_ORDER.filter((t) => byType[t]),
-    ...Object.keys(byType).filter((t) => !TYPE_ORDER.includes(t)),
+  // ── 2. Scènes (exécution directe via /api/scene/<name>) ─────────────────
+  const SCENES = [
+    { label:'🎯 Focus', scene:'focus', on:true },
+    { label:'🌊 Relax', scene:'relax' },
+    { label:'🌙 Nuit',  scene:'nuit' },
+    { label:'💡 Off',   scene:'off_lights' },
   ];
 
-  const panelsHtml = sortedTypes.map((type) => {
-    const group = byType[type];
-    const rows = group.map((e) => {
-      const icon  = STATE_ICON[e.state] || '🟡';
-      let extra = '';
-      if (e.attributes?.brightness != null) extra = ` · ${Math.round(e.attributes.brightness / 2.55)}%`;
-      else if (e.attributes?.temperature != null) extra = ` · ${e.attributes.temperature}°`;
-      else if (e.attributes?.humidity != null) extra = ` · ${e.attributes.humidity}%`;
-      const zone = e.zone && e.zone !== 'Other' ? `<span class="page-muted"> [${escapeHtml(e.zone)}]</span>` : '';
-      return `<div class="page-status-row"><span>${icon} ${escapeHtml(e.name)}${zone}</span><b>${escapeHtml(e.state || '?')}${escapeHtml(extra)}</b></div>`;
+  // ── 3. Appareils contrôlables (lumières + switches) → toggle-grid ────────
+  const controllable  = entities.filter(e => ['light','switch'].includes(e.type));
+  const informational = entities.filter(e => !['light','switch'].includes(e.type));
+
+  const toggleItems = controllable.map(e => {
+    const isOn = e.state === 'on';
+    let sub = (e.zone && e.zone !== 'Other') ? e.zone : '';
+    if (e.attributes?.brightness  != null) sub += (sub ? ' · ' : '') + `${Math.round(e.attributes.brightness / 2.55)}%`;
+    else if (e.attributes?.temperature != null) sub += (sub ? ' · ' : '') + `${e.attributes.temperature}°`;
+    const icon = _TI[e.type] || '⚡';
+    return `<div class="toggle-item" data-id="${escapeHtml(e.id)}" data-provider="${escapeHtml(e.provider)}">
+      <div><div class="ti-n">${icon} ${escapeHtml(e.name)}</div>${sub ? `<div class="ti-s">${escapeHtml(sub)}</div>` : ''}</div>
+      <div class="sw${isOn ? ' on' : ''}"></div>
+    </div>`;
+  }).join('');
+
+  // ── 4. Capteurs et autres → panneaux info ────────────────────────────────
+  const byType = {};
+  for (const e of informational) (byType[e.type || 'unknown'] ||= []).push(e);
+
+  const infoPanels = Object.keys(byType).map(type => {
+    const rows = byType[type].map(e => {
+      let st = e.state || '?';
+      if (e.attributes?.unit_of_measurement) st += ' ' + e.attributes.unit_of_measurement;
+      return `<div class="page-status-row"><span>${_TI[type] || ''} ${escapeHtml(e.name)}</span><b>${escapeHtml(st)}</b></div>`;
     }).join('');
-    return `<section class="page-panel"><h3>${escapeHtml(TYPE_LABELS[type] || type)} (${group.length})</h3><div class="page-status-list">${rows}</div></section>`;
+    return `<div style="margin-top:4px"><div class="sec">${escapeHtml(_TL[type] || type)}</div><div>${rows}</div></div>`;
   }).join('');
 
   el.innerHTML = `
-    <section class="page-panel"><h3>Providers</h3>
-      ${provHtml || '<p class="page-muted">Aucun provider configuré.</p>'}
-      <div class="page-status-row" style="margin-top:6px"><span>Total entités</span><b>${data.count || 0}</b></div>
-    </section>
-    ${panelsHtml}`;
+    <div class="domo-wrap">
+      ${providers.length ? `<div class="domo-prov-bar">${provBadges}</div>` : ''}
+      <div class="sec">Scènes</div>
+      <div class="scene-row" id="domo-scenes">
+        ${SCENES.map(s => `<button class="scene-btn${s.on ? ' on' : ''}" data-scene="${escapeHtml(s.scene)}">${s.label}</button>`).join('')}
+      </div>
+      ${controllable.length ? `
+        <div class="sec">Appareils</div>
+        <div class="toggle-grid domo-3col" id="domo-toggles">${toggleItems}</div>
+      ` : `<p class="page-muted" style="margin-top:12px">Aucune entité contrôlable. Vérifiez la configuration des providers.</p>`}
+      ${infoPanels}
+    </div>
+    <style>
+      .domo-wrap{display:flex;flex-direction:column;padding:2px 0;grid-column:1/-1}
+      .domo-prov-bar{display:flex;gap:8px;flex-wrap:wrap;padding:6px 0 10px;border-bottom:1px solid var(--border);margin-bottom:2px}
+      .domo-prov-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;border-radius:20px;background:var(--surface);border:1px solid var(--border);color:var(--text)}
+      .domo-3col{grid-template-columns:1fr 1fr 1fr}
+      @media(max-width:700px){.domo-3col{grid-template-columns:1fr 1fr}}
+    </style>`;
+
+  // Scènes : click → POST /api/scene/<name>
+  el.querySelector('#domo-scenes').addEventListener('click', e => {
+    const btn = e.target.closest('.scene-btn');
+    if (!btn) return;
+    el.querySelectorAll('#domo-scenes .scene-btn').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    const scene = btn.dataset.scene;
+    fetch(`/api/scene/${encodeURIComponent(scene)}`, { method: 'POST' })
+      .then(r => r.json())
+      .then(d => { if (!d.ok) btn.classList.remove('on'); })
+      .catch(() => btn.classList.remove('on'));
+  });
+
+  // Toggles : click → POST /api/entity/<id>/toggle
+  const grid = el.querySelector('#domo-toggles');
+  if (grid) {
+    grid.addEventListener('click', e => {
+      const sw = e.target.closest('.sw');
+      if (!sw) return;
+      const item = sw.closest('.toggle-item');
+      const id   = item?.dataset.id;
+      if (!id) return;
+      const isOn = sw.classList.toggle('on');
+      fetch(`/api/entity/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: isOn }),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) sw.classList.toggle('on'); // rollback si échec
+      }).catch(() => sw.classList.toggle('on'));
+    });
+  }
 }
 
 function _renderSkills(data, el) {

@@ -316,3 +316,12 @@ def use_recovery_code(user_id: str, code: str) -> bool:
             return True
     conn.close()
     return False
+
+
+def get_device_profile_id(device_id: str) -> str | None:
+    conn = _connect()
+    row = conn.execute(
+        "SELECT profile_id FROM devices WHERE id=?", (device_id,)
+    ).fetchone()
+    conn.close()
+    return row["profile_id"] if row else None

@@ -25,6 +25,7 @@ ALL_MENU_TAGS: list[str] = [
     "marketing",     # data-view="marketing"
     "infrastructure",# data-page="infrastructure"
     "settings",      # data-view="settings"
+    "profile-editor",# data-view="profile-editor" (admin only)
     # MODULE_SOCIETE
     "societe",       # data-view="societe"
 ]

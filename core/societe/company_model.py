@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS companies (
     website         TEXT DEFAULT '',
     notes           TEXT DEFAULT '',
     connectors_json TEXT DEFAULT '{}',            -- {"dolibarr": {...}}
+    skill_domain    TEXT DEFAULT NULL,            -- domaine skills FTS (ex: "margep"), NULL = utilise l'id
     created_at      REAL NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER)),
     updated_at      REAL NOT NULL DEFAULT (CAST(strftime('%s','now') AS INTEGER))
 );
@@ -97,58 +98,10 @@ CREATE TABLE IF NOT EXISTS company_documents (
 """
 
 _SEED_COMPANIES: list[dict] = [
-    {
-        "id": "opentechno",
-        "name": "OpenTechno",
-        "logo": "🔷",
-        "color": "#5E6AD2",
-        "type": "SAS",
-        "status": "active",
-        "address": "",
-        "email": "",
-        "website": "",
-        "notes": "",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "uscss",
-        "name": "USCSS",
-        "logo": "🚀",
-        "color": "#E86C3A",
-        "type": "SARL",
-        "status": "active",
-        "address": "",
-        "email": "",
-        "website": "",
-        "notes": "",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "margepro",
-        "name": "MargePro",
-        "logo": "💰",
-        "color": "#16A349",
-        "type": "EI",
-        "status": "active",
-        "address": "",
-        "email": "",
-        "website": "",
-        "notes": "",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "nexagen",
-        "name": "NexaGen",
-        "logo": "🌐",
-        "color": "#7C3AED",
-        "type": "SAS",
-        "status": "active",
-        "address": "",
-        "email": "",
-        "website": "",
-        "notes": "",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
+    {"id": "opentechno", "name": "OpenTechno", "logo": "🔷", "color": "#5E6AD2", "type": "SAS",  "status": "active", "address": "", "email": "", "website": "", "notes": "", "connectors_json": '{"dolibarr": {"enabled": false}}', "skill_domain": "opentechno"},
+    {"id": "uscss",      "name": "USCSS",      "logo": "🚀", "color": "#E86C3A", "type": "SARL", "status": "active", "address": "", "email": "", "website": "", "notes": "", "connectors_json": '{"dolibarr": {"enabled": false}}', "skill_domain": "uscss"},
+    {"id": "margepro",  "name": "MargePro",  "logo": "💰", "color": "#16A349", "type": "EI",   "status": "active", "address": "", "email": "", "website": "", "notes": "", "connectors_json": '{"dolibarr": {"enabled": false}}', "skill_domain": "margep"},
+    {"id": "nexagen",   "name": "NexaGen",   "logo": "🌐", "color": "#7C3AED", "type": "SAS",  "status": "active", "address": "", "email": "", "website": "", "notes": "", "connectors_json": '{"dolibarr": {"enabled": false}}', "skill_domain": "nexagen"},
 ]
 
 _SEED_METRICS: list[dict] = [
@@ -188,6 +141,7 @@ class Company:
     website: str = ""
     notes: str = ""
     connectors: dict = field(default_factory=dict)
+    skill_domain: str = ""  # MODULE_SOCIETE: domaine skill FTS, vide = utilise l'id comme domaine
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Company":
@@ -204,6 +158,7 @@ class Company:
             website=row["website"],
             notes=row["notes"],
             connectors=json.loads(row["connectors_json"] or "{}"),
+            skill_domain=row["skill_domain"] or "",
         )
 
 
@@ -260,9 +215,20 @@ class CompanyModel:
         with _get_conn() as conn:
             conn.executescript(_DDL)
         self._migrate_type_field()
+        self._migrate_skill_domain()
         self._maybe_seed()
         self._initialized = True
         print("[CompanyModel] ✓ Base de données societes.db initialisée")
+
+    def _migrate_skill_domain(self) -> None:
+        """Migration : ajoute la colonne skill_domain si absente."""
+        with _get_conn() as conn:
+            cols = [r["name"] for r in conn.execute("PRAGMA table_info(companies)").fetchall()]
+            if "skill_domain" not in cols:
+                conn.execute("ALTER TABLE companies ADD COLUMN skill_domain TEXT DEFAULT NULL")
+                # Seed initial pour margepro dont le domaine skill diffère de l'id
+                conn.execute("UPDATE companies SET skill_domain='margep' WHERE id='margepro'")
+                print("[CompanyModel] ↳ Migration skill_domain ajouté")
 
     def _migrate_type_field(self) -> None:
         """
@@ -291,8 +257,8 @@ class CompanyModel:
             for c in _SEED_COMPANIES:
                 conn.execute(
                     """INSERT OR IGNORE INTO companies
-                       (id, name, logo, color, type, status, address, email, website, notes, connectors_json)
-                       VALUES (:id, :name, :logo, :color, :type, :status, :address, :email, :website, :notes, :connectors_json)""",
+                       (id, name, logo, color, type, status, address, email, website, notes, connectors_json, skill_domain)
+                       VALUES (:id, :name, :logo, :color, :type, :status, :address, :email, :website, :notes, :connectors_json, :skill_domain)""",
                     c,
                 )
             for m in _SEED_METRICS:
@@ -327,14 +293,14 @@ class CompanyModel:
     def create_company(self, company: Company) -> None:
         with _get_conn() as conn:
             conn.execute(
-                """INSERT INTO companies (id, name, logo, color, type, status,
-                   address, phone, email, website, notes, connectors_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    """INSERT INTO companies (id, name, logo, color, type, status,
+                   address, phone, email, website, notes, connectors_json, skill_domain)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     company.id, company.name, company.logo, company.color,
                     company.type, company.status, company.address, company.phone,
                     company.email, company.website, company.notes,
-                    json.dumps(company.connectors),
+                    json.dumps(company.connectors), company.skill_domain or None,
                 ),
             )
 
@@ -343,12 +309,14 @@ class CompanyModel:
             conn.execute(
                 """UPDATE companies SET name=?, logo=?, color=?, type=?, status=?,
                    address=?, phone=?, email=?, website=?, notes=?, connectors_json=?,
+                   skill_domain=?,
                    updated_at=CAST(strftime('%s','now') AS INTEGER)
                    WHERE id=?""",
                 (
                     company.name, company.logo, company.color, company.type,
                     company.status, company.address, company.phone, company.email,
                     company.website, company.notes, json.dumps(company.connectors),
+                    company.skill_domain or None,
                     company.id,
                 ),
             )

@@ -3,13 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#17c3e8">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="ADA">
-<title>ADA</title>
-<link rel="manifest" href="/manifest.json">
-<link rel="apple-touch-icon" href="/static/icon.svg">
+<title>ADA v3</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -80,62 +74,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
   grid-template-rows:var(--topbar-h) 1fr;
   grid-template-columns:var(--nav-w) 1fr var(--chat-w);
   height:100vh;
-  height:100svh; /* barre URL exclue — iOS/Android */
   transition:grid-template-columns .3s cubic-bezier(.4,0,.2,1);
 }
 #app.chat-full{
   grid-template-columns:var(--nav-w) 180px 1fr;
-}
-/* Chat caché : only toggle knob visible */
-#app.chat-hidden{
-  grid-template-columns:var(--nav-w) 1fr 13px;
-}
-#app.chat-hidden #chat{overflow:visible;}
-#app.chat-hidden #chat .chat-head,
-#app.chat-hidden #chat .ctx-bar,
-#app.chat-hidden #chat #chat-msgs,
-#app.chat-hidden #chat #typing,
-#app.chat-hidden #chat .quick-bar,
-#app.chat-hidden #chat .chat-input-row{display:none;}
-/* Backdrop mobile */
-#chat-backdrop{
-  display:none;position:fixed;inset:0;
-  background:rgba(0,0,0,.45);z-index:199;cursor:pointer;
-}
-/* Mobile : chat en drawer glissant */
-#chat-toggle-mob{
-  display:none;
-  align-items:center;justify-content:center;
-  background:none;border:1px solid var(--border);border-radius:8px;
-  width:30px;height:30px;cursor:pointer;color:var(--text-dim);font-size:15px;
-  flex-shrink:0;
-}
-#chat-toggle-mob:hover{color:var(--accent);background:var(--surface2);}
-@media(max-width:768px){
-  #app{
-    grid-template-columns:var(--nav-w) 1fr;
-    height:100vh;
-    height:100svh;
-  }
-  /* Topbar épurée : masquer pills, density, thèmes, horloge */
-  .tb-status,.density-row,.theme-row,.clock{display:none!important;}
-  #content{overflow-y:auto;}
-  #chat{
-    position:fixed;
-    top:var(--topbar-h);right:0;
-    bottom:0;
-    padding-bottom:env(safe-area-inset-bottom,0px);
-    width:min(340px,92vw);z-index:200;
-    background:var(--surface);
-    transform:translateX(110%);
-    transition:transform .28s cubic-bezier(.4,0,.2,1);
-    box-shadow:-4px 0 28px rgba(0,0,0,.55);
-  }
-  #app.chat-open #chat{transform:translateX(0);}
-  #app.chat-open #chat-backdrop{display:block;}
-  #chat-toggle{display:none;}
-  #chat-toggle-mob{display:flex;}
-  #app.chat-hidden{grid-template-columns:var(--nav-w) 1fr;}
 }
 
 /* ═══════════════════════════════════════════
@@ -208,32 +150,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 .d-btn.on{border-color:var(--accent);color:var(--accent);background:var(--glow);}
 .d-btn:hover{color:var(--text);}
 
-/* Admin menu */
-#admin-btn{
-  width:28px;height:28px;border-radius:8px;border:1px solid var(--border);
-  background:transparent;color:var(--text-dim);cursor:pointer;
-  display:flex;align-items:center;justify-content:center;font-size:14px;
-  transition:all .15s;position:relative;
-}
-#admin-btn:hover{background:var(--surface2);color:var(--text);border-color:var(--border-hi);}
-#admin-drop{
-  position:absolute;top:calc(100% + 6px);right:0;min-width:170px;
-  background:var(--surface3);border:1px solid var(--border-hi);
-  border-radius:8px;padding:4px;z-index:300;
-  display:none;flex-direction:column;gap:1px;
-  box-shadow:0 8px 24px rgba(0,0,0,.5);
-}
-#admin-drop.show{display:flex;}
-.adm-item{
-  padding:7px 11px;border-radius:5px;font-size:11px;font-weight:500;
-  color:var(--text-mid);cursor:pointer;display:flex;align-items:center;gap:8px;
-  transition:background .1s;
-}
-.adm-item:hover{background:var(--surface2);color:var(--text);}
-.adm-item.danger{color:var(--red);}
-.adm-item.danger:hover{background:rgba(255,80,80,.08);}
-.adm-sep{height:1px;background:var(--border);margin:3px 0;}
-
 /* ═══════════════════════════════════════════
    NAV STRIP
 ═══════════════════════════════════════════ */
@@ -286,54 +202,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 
 .nav-sep{width:22px;height:1px;background:var(--border);margin:3px 0;}
 .nav-bottom{margin-top:auto;}
-
-/* ── Nav toggle & expand ─────────────────────────────────────── */
-.nav-label{display:none;font-size:11px;font-weight:500;white-space:nowrap;line-height:1;}
-#nav-toggle{
-  width:36px;height:36px;border-radius:9px;
-  display:flex;align-items:center;justify-content:center;
-  cursor:pointer;font-size:15px;color:var(--text-dim);
-  transition:all .15s;flex-shrink:0;border:1px solid transparent;
-  margin-bottom:2px;
-}
-#nav-toggle:hover{background:var(--surface2);color:var(--text);}
-/* Expanded state */
-#app.nav-expanded{--nav-w:180px;}
-#app.nav-expanded #nav{align-items:stretch;padding:8px 6px;}
-#app.nav-expanded #nav-toggle,
-#app.nav-expanded .nav-btn{width:auto;padding:0 10px;justify-content:flex-start;gap:9px;}
-#app.nav-expanded .nav-label{display:inline;}
-#app.nav-expanded .nav-tip{display:none;}
-#app.nav-expanded .nav-sep{width:100%;}
-
-/* ── View overlay (settings / profils) ───────────────────────── */
-#view-overlay{
-  position:fixed;inset:0;z-index:500;
-  background:rgba(0,0,0,.72);backdrop-filter:blur(4px);
-  display:none;align-items:flex-start;justify-content:center;
-  padding:44px 20px 20px;
-}
-#view-overlay.show{display:flex;}
-#view-frame{
-  width:min(940px,100%);max-height:calc(100vh - 64px);
-  background:var(--bg);border:1px solid var(--border-hi);
-  border-radius:12px;overflow:hidden;position:relative;flex:none;
-  display:flex;flex-direction:column;
-}
-#view-topbar{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:10px 16px;border-bottom:1px solid var(--border);
-  flex-shrink:0;background:var(--nav-bg);border-radius:12px 12px 0 0;
-}
-#view-title-label{font-size:12px;font-weight:600;color:var(--text-dim);}
-#view-body{overflow:auto;flex:1;}
-#view-close{
-  width:26px;height:26px;border-radius:7px;
-  background:var(--surface2);border:1px solid var(--border);
-  color:var(--text-dim);cursor:pointer;
-  display:flex;align-items:center;justify-content:center;font-size:12px;
-}
-#view-close:hover{color:var(--text);}
 
 /* ═══════════════════════════════════════════
    CONTENT AREA
@@ -547,8 +415,6 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 .ct-home{background:rgba(168,136,255,.1);color:#a888ff;border-color:rgba(168,136,255,.28);}
 .ct-co  {background:rgba(23,195,232,.06);color:var(--accent);border-color:rgba(23,195,232,.22);}
 .ct-plan{background:rgba(245,152,0,.08);color:var(--orange);border-color:rgba(245,152,0,.25);}
-.ctx-lbl{font-size:9px;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;flex-basis:100%;margin-bottom:1px;}
-.ctx-dot{width:5px;height:5px;border-radius:50%;display:inline-block;margin-right:3px;vertical-align:middle;}
 
 #chat-msgs{
   flex:1;overflow-y:auto;padding:10px;
@@ -644,7 +510,6 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 }
 #app.chat-full #mini-dash{display:flex;}
 #app.chat-full #content{display:none;}
-@media(max-width:768px){#app.chat-full #content{display:flex;}#app.chat-full #mini-dash{display:none;}}
 
 .mini-head{
   padding:8px 10px 6px;font-size:9px;text-transform:uppercase;
@@ -671,29 +536,6 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 ::-webkit-scrollbar{width:3px;}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:2px;}
-
-/* ═══════════════════════════════════════════
-   AUTH OVERLAY
-═══════════════════════════════════════════ */
-#auth-screen{
-  display:none;position:fixed;inset:0;z-index:9999;
-  background:var(--bg);overflow:auto;
-}
-#auth-viewport{
-  height:100%;display:flex;align-items:center;justify-content:center;
-}
-
-/* ═══════════════════════════════════════════
-   TOAST
-═══════════════════════════════════════════ */
-#toast{
-  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
-  z-index:10000;background:var(--surface3);border:1px solid var(--border-hi);
-  padding:8px 18px;border-radius:8px;font-size:12px;
-  opacity:0;pointer-events:none;transition:opacity .2s;
-  white-space:nowrap;
-}
-#toast.on{opacity:1;pointer-events:auto;}
 </style>
 </head>
 <body>
@@ -733,53 +575,34 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     </div>
     <!-- Clock -->
     <div class="clock"><b id="clock">--:--</b><span id="datestr"></span></div>
-    <!-- Chat toggle mobile -->
-    <button id="chat-toggle-mob" onclick="toggleChat()" title="Chat">💬</button>
-    <!-- Admin -->
-    <div id="admin-btn" onclick="toggleAdminMenu(event)" title="Administration">
-      &#9881;
-      <div id="admin-drop">
-        <div class="adm-item" onclick="adminRestart()">&#128260; Redémarrer ADA</div>
-        <div class="adm-item" onclick="adminClearCache()">&#128465; Vider le cache</div>
-        <div class="adm-sep"></div>
-        <div class="adm-item danger" onclick="adminLogout()">&#10132; Déconnexion</div>
-      </div>
-    </div>
   </div>
 </header>
 
 <!-- ═══ NAV ═══ -->
 <nav id="nav">
-  <div id="nav-toggle" onclick="toggleNav()">
-    ☰<span class="nav-label">Menu</span>
-  </div>
-  <div class="nav-sep"></div>
   <div class="nav-btn on" data-uni="dash" onclick="goUni('dash',this)">
-    ◈<span class="nav-tip">Dashboard</span><span class="nav-label">Dashboard</span>
+    ◈<span class="nav-tip">Dashboard</span>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-btn" data-uni="home" data-c onclick="goUni('home',this)">
-    🏠<span class="nav-tip">Maison</span><span class="nav-label">Maison</span>
+    🏠<span class="nav-tip">Maison</span>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-btn" data-uni="co" data-c onclick="goUni('co',this)">
-    ◈<span class="nav-tip">Société</span><span class="nav-label">Société</span>
+    ◈<span class="nav-tip">Société</span>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-btn" data-uni="plan" data-c onclick="goUni('plan',this)">
-    📅<span class="nav-tip">Planification</span><span class="nav-label">Planification</span>
+    📅<span class="nav-tip">Planification</span>
   </div>
   <div class="nav-sep"></div>
   <div class="nav-btn" data-uni="tools" data-c onclick="goUni('tools',this)">
-    ⚙<span class="nav-tip">Outils</span><span class="nav-label">Outils</span>
+    ⚙<span class="nav-tip">Outils</span>
   </div>
   <div class="nav-bottom">
     <div class="nav-sep"></div>
-    <div class="nav-btn" onclick="openView('settings')">
-      ⚙<span class="nav-tip">Paramètres</span><span class="nav-label">Paramètres</span>
-    </div>
-    <div class="nav-btn" onclick="openView('profile-editor')">
-      👤<span class="nav-tip">Profils & Univers</span><span class="nav-label">Profils & Univers</span>
+    <div class="nav-btn" onclick="inject('Ouvrir les paramètres')">
+      ⊞<span class="nav-tip">Profils</span>
     </div>
   </div>
 </nav>
@@ -789,7 +612,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 
   <!-- ── DASHBOARD ── -->
   <div class="uni-panel on" id="uni-dash">
-    <div class="subview on" id="uni-dash-content" style="padding:var(--sp2,14px)">
+    <div class="subview on" style="padding:var(--sp2,14px)">
 
       <div class="sec">KPIs temps réel</div>
       <div class="dash-grid">
@@ -1087,7 +910,6 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   <div class="mini-alert" onclick="inject('État switch salon')">
     <div class="ma-dot" style="background:var(--accent)"></div>Switch salon redémarré
   </div>
-<div id="chat-backdrop" onclick="toggleChat()"></div>
 </div>
 
 <!-- ═══ CHAT ═══ -->
@@ -1100,7 +922,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     <div class="chat-model">mistral · local</div>
   </div>
 
-  <div class="ctx-bar" id="ctx-bar">
+  <div class="ctx-bar">
     <div class="ctx-tag ct-dash on" onclick="this.classList.toggle('on')">Dashboard</div>
     <div class="ctx-tag ct-home on" onclick="this.classList.toggle('on')">Maison</div>
     <div class="ctx-tag ct-co on" onclick="this.classList.toggle('on')">Société</div>
@@ -1131,7 +953,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     <div class="td"></div><div class="td"></div><div class="td"></div>
   </div>
 
-  <div class="quick-bar" id="quick-bar">
+  <div class="quick-bar">
     <button class="qp" onclick="inject('État serveurs')">📊 Serveurs</button>
     <button class="qp" onclick="inject('Backups récents')">💾 Backups</button>
     <button class="qp" onclick="inject('Mode nuit')">🌙 Nuit</button>
@@ -1147,229 +969,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 
 </div><!-- /app -->
 
-<!-- ═══ AUTH OVERLAY ═══ -->
-<div id="auth-screen">
-  <div id="auth-viewport"></div>
-</div>
-
-<!-- ═══ TOAST ═══ -->
-<div id="toast" role="status" aria-live="assertive"></div>
-
-<!-- ═══ VIEW OVERLAY ═══ -->
-<div id="view-overlay">
-  <div id="view-frame">
-    <div id="view-topbar">
-      <span id="view-title-label"></span>
-      <div id="view-close" onclick="closeView()">✕</div>
-    </div>
-    <div id="view-body"></div>
-  </div>
-</div>
-
 <script>
-// ════════════════════════════════════════════════════════════════
-//  ADA v3 — Shell JS
-//  Chat SSE réel · Auth JWT · Status · UI locale
-// ════════════════════════════════════════════════════════════════
-
-// ── Token ──────────────────────────────────────────────────────
-function _getToken(){return localStorage.getItem('ada_token');}
-function _setToken(t){localStorage.setItem('ada_token',t);}
-
-// ── Toast ──────────────────────────────────────────────────────
-function showToast(msg){
-  const el=document.getElementById('toast');
-  if(!el)return;
-  el.textContent=msg;
-  el.classList.add('on');
-  clearTimeout(el._t);
-  el._t=setTimeout(()=>el.classList.remove('on'),3000);
-}
-
-// ── Auth ───────────────────────────────────────────────────────
-async function _checkAuth(){
-  try{
-    const cfg=await fetch('/api/auth/config').then(r=>r.json());
-    if(!cfg.enabled)return true;
-  }catch{return true;}
-  const token=_getToken();
-  if(!token)return false;
-  try{
-    const r=await fetch('/api/auth/me',{headers:{'Authorization':'Bearer '+token}});
-    return r.ok;
-  }catch{return false;}
-}
-
-async function _showAuth(){
-  const screen=document.getElementById('auth-screen');
-  const vp=document.getElementById('auth-viewport');
-  screen.style.display='block';
-  try{
-    // Charge le module auth existant
-    const mod=await import('/static/views/auth/index.js');
-    await mod.mount(vp);
-  }catch(e){
-    vp.innerHTML='<div style="color:var(--text);text-align:center;padding:40px"><div style="font-size:32px;margin-bottom:12px">🔒</div><div style="font-size:14px">Connexion requise</div><div style="font-size:11px;color:var(--text-dim);margin-top:6px">Ouvrez ADA depuis l\'appareil enregistré</div></div>';
-  }
-  // Polling jusqu'à auth OK
-  const iv=setInterval(async()=>{
-    if(await _checkAuth()){
-      clearInterval(iv);
-      screen.style.display='none';
-      await _onAuthenticated();
-    }
-  },2000);
-}
-
-let _activeUni='dash',_activeSub='';
-async function _onAuthenticated(){
-  _activeUni='dash';_activeSub='';
-  // initialise le contexte dashboard par défaut
-  const _dashCtx=_UNI_CTX&&_UNI_CTX.dash;
-  _activeCtxText=_dashCtx?_dashCtx.text||'':'';
-  _activeDomain=_dashCtx?_dashCtx.domain:null;
-  await _loadProfile();
-  await _loadStatus();
-  _loadSubView('uni-dash-content','dashboard');
-  _renderUniCtxBar&&_renderUniCtxBar('dash');
-}
-
-// ── Profil (thème + densité depuis /api/profile) ───────────────
-async function _loadProfile(){
-  const token=_getToken();
-  if(!token)return;
-  try{
-    const r=await fetch('/api/profile',{headers:{'Authorization':'Bearer '+token}});
-    if(!r.ok)return;
-    const p=await r.json();
-    if(p.theme){
-      document.documentElement.setAttribute('data-theme',p.theme);
-      document.querySelectorAll('.t-dot').forEach(d=>d.classList.toggle('on',d.dataset.t===p.theme));
-      setTimeout(drawSparks,40);
-    }
-    if(p.density){
-      document.documentElement.setAttribute('data-density',p.density);
-      document.querySelectorAll('.d-btn').forEach(b=>b.classList.toggle('on',b.dataset.d===p.density));
-    }
-  }catch{}
-}
-
-// ── Status pills (/api/status) ─────────────────────────────────
-async function _loadStatus(){
-  try{
-    const token=_getToken();
-    const h=token?{'Authorization':'Bearer '+token}:{};
-    const s=await fetch('/api/status',{headers:h}).then(r=>r.json());
-    // Pilule LLM (première pilule)
-    const pill=document.querySelector('.status-pill');
-    if(pill){
-      const dot=pill.querySelector('.s-dot');
-      const b=pill.querySelector('b');
-      const ok=s.ollama==='online';
-      if(dot){dot.className='s-dot '+(ok?'dot-g pulse':'dot-r');}
-      if(b){b.textContent=ok?'Mistral':'Offline';}
-    }
-  }catch{}
-}
-
-// ── Chat SSE ───────────────────────────────────────────────────
-const _chatMsgs=document.getElementById('chat-msgs');
-const _chatInput=document.getElementById('chat-input');
-const _history=[];
-
-function inject(t){_chatInput.value=t;_chatInput.focus();autoResize(_chatInput);}
-function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,80)+'px';}
-function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}}
-
-function _appendMsg(t,who){
-  const d=document.createElement('div');
-  d.className='msg msg-'+who;
-  if(who==='ada')d.innerHTML='<div class="from"></div>'+t.replace(/\n/g,'<br>');
-  else d.textContent=t;
-  _chatMsgs.appendChild(d);
-  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
-  return d;
-}
-
-async function sendMsg(){
-  const t=_chatInput.value.trim();
-  if(!t)return;
-  _appendMsg(t,'user');
-  _history.push({role:'user',content:t});
-  _chatInput.value='';_chatInput.style.height='auto';
-
-  const typing=document.getElementById('typing');
-  typing.classList.add('on');
-  _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
-
-  // Contexte actif — toujours injecté selon l'univers courant
-  const ctx=_activeUni==='co'?_socCtxId:(_activeDomain||null);
-  const histSlice=_history.slice(-10);
-  const histForSend=_activeCtxText
-    ?[{role:'user',content:`Contexte actif :\n${_activeCtxText}`},{role:'assistant',content:'Contexte pris en compte.'},...histSlice]
-    :histSlice;
-
-  const token=_getToken();
-  const headers={'Content-Type':'application/json'};
-  if(token)headers['Authorization']='Bearer '+token;
-
-  try{
-    const r=await fetch('/api/chat',{
-      method:'POST',
-      headers,
-      body:JSON.stringify({
-        message:t,
-        history:histForSend,
-        company_context:ctx||null,
-        context:`Univers: ${_activeUni}${_activeSub?' › '+_activeSub:''}`,
-      }),
-    });
-    typing.classList.remove('on');
-    if(!r.ok){_appendMsg('Erreur '+r.status,'ada');return;}
-
-    // Conteneur de la réponse en streaming
-    const msgEl=document.createElement('div');
-    msgEl.className='msg msg-ada';
-    msgEl.innerHTML='<div class="from"></div><span class="_body"></span>';
-    _chatMsgs.appendChild(msgEl);
-    _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
-    const bodyEl=msgEl.querySelector('._body');
-
-    const reader=r.body.getReader();
-    const decoder=new TextDecoder();
-    let buf='',fullText='';
-
-    while(true){
-      const{done,value}=await reader.read();
-      if(done)break;
-      buf+=decoder.decode(value,{stream:true});
-      const lines=buf.split('\n');buf=lines.pop();
-      for(const line of lines){
-        if(!line.startsWith('data:'))continue;
-        const data=line.slice(5).trim();
-        if(data==='[DONE]'){buf='';break;}
-        try{
-          const j=JSON.parse(data);
-          if(j.text){fullText+=j.text;bodyEl.innerHTML=fullText.replace(/\n/g,'<br>');_chatMsgs.scrollTop=_chatMsgs.scrollHeight;}
-        }catch{}
-      }
-    }
-    if(fullText)_history.push({role:'assistant',content:fullText});
-
-  }catch(e){
-    typing.classList.remove('on');
-    _appendMsg('Erreur réseau : '+e.message,'ada');
-  }
-}
-
-function confirmAct(btn){
-  btn.closest('.action-card').innerHTML='<span style="color:var(--green)">✓ Confirmé — exécution en cours…</span>';
-  setTimeout(()=>_appendMsg('Backup lancé ✓ — Job #4821 · durée estimée 12 min.','ada'),1200);
-}
-function cancelAct(btn){
-  btn.closest('.action-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
-}
-
 // ── Clock ──────────────────────────────────────────────────────
 function tick(){
   const n=new Date();
@@ -1380,7 +980,7 @@ function tick(){
 }
 tick();setInterval(tick,10000);
 
-// ── Thème ──────────────────────────────────────────────────────
+// ── Theme ──────────────────────────────────────────────────────
 function setTheme(el){
   document.documentElement.setAttribute('data-theme',el.dataset.t);
   document.querySelectorAll('.t-dot').forEach(d=>d.classList.remove('on'));
@@ -1388,7 +988,7 @@ function setTheme(el){
   setTimeout(drawSparks,40);
 }
 
-// ── Densité ────────────────────────────────────────────────────
+// ── Density ────────────────────────────────────────────────────
 document.querySelectorAll('.d-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
     document.documentElement.setAttribute('data-density',btn.dataset.d);
@@ -1399,6 +999,7 @@ document.querySelectorAll('.d-btn').forEach(btn=>{
 
 // ── Universe nav ───────────────────────────────────────────────
 const UNI_LABELS={dash:'Dashboard',home:'Maison',co:'Société',plan:'Planification',tools:'Outils'};
+
 function goUni(id,btn){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('on'));
   btn.classList.add('on');
@@ -1408,19 +1009,6 @@ function goUni(id,btn){
   document.getElementById('bc-uni').textContent=UNI_LABELS[id]||id;
   document.getElementById('bc-sep').style.display='none';
   document.getElementById('bc-sub').style.display='none';
-  _activeUni=id;_activeSub='';
-  if(id==='dash') _loadSubView('uni-dash-content','dashboard');
-  if(id==='co')   _loadSubView('uni-co','societe');
-  if(id==='co'){
-    // auto-sélectionner la première société si aucune n'est active
-    if(!_socCtxId&&_socCompanies.length>0){socSetCtx(null,_socCompanies[0].id);}
-    else _renderSocieteCtxBar();
-  } else {
-    const c=_UNI_CTX[id];
-    _activeCtxText=c?c.text||'':'';
-    _activeDomain=c?c.domain:null;
-    _renderUniCtxBar(id);
-  }
 }
 
 // ── Sub-tabs ───────────────────────────────────────────────────
@@ -1440,209 +1028,17 @@ function goSub(el,subId){
   const sep=document.getElementById('bc-sep');
   const sub_el=document.getElementById('bc-sub');
   if(labels[subId]){sep.style.display='';sub_el.style.display='';sub_el.textContent=labels[subId];}
-  _activeSub=labels[subId]||subId;
-  const _VM={
-    'sub-cameras':  ['cameras',  {}],
-    'sub-mkt':      ['marketing',{}],
-    'sub-mem':      ['memory',   {}],
-    'sub-briefing': ['briefing', {}],
-    'sub-agenda':   ['planner',  {}],
-    'sub-skills':   ['skills',   {}],
-    'sub-settings': ['settings', {}],
-    'sub-domo':     ['page',     {page:'home',           hint:'État domotique complet'}],
-    'sub-infra':    ['page',     {page:'infrastructure', hint:'État infrastructure'}],
-    'sub-rmm':      ['page',     {page:'printers',       hint:'RMM clients actifs'}],
-  };
-  if(_VM[subId]){const[v,o]=_VM[subId];_loadSubView(subId,v,o);}
 }
 
-// ── Chat toggle ────────────────────────────────────────────────
-let chatHidden=false;
+// ── Chat toggle ─────────────────────────────────────────────────
+let chatFull=false;
 function toggleChat(){
-  const app=document.getElementById('app');
-  if(window.innerWidth<=768){
-    app.classList.toggle('chat-open');
-  }else{
-    chatHidden=!chatHidden;
-    app.classList.toggle('chat-hidden',chatHidden);
-    app.classList.remove('chat-full');
-    const tog=document.getElementById('chat-toggle');
-    if(tog)tog.textContent=chatHidden?'▸':'◂';
-  }
+  chatFull=!chatFull;
+  document.getElementById('app').classList.toggle('chat-full',chatFull);
+  document.getElementById('chat-toggle').textContent=chatFull?'▸':'◂';
 }
 
-// ── Admin menu ────────────────────────────────────────────────
-function toggleAdminMenu(e){
-  e.stopPropagation();
-  document.getElementById('admin-drop').classList.toggle('show');
-}
-document.addEventListener('click',()=>document.getElementById('admin-drop')?.classList.remove('show'));
-async function adminRestart(){
-  document.getElementById('admin-drop').classList.remove('show');
-  showToast('Redémarrage en cours…');
-  try{
-    await fetch('/api/admin/restart',{method:'POST',headers:{'Authorization':'Bearer '+_getToken()}});
-    setTimeout(()=>location.reload(),2500);
-  }catch{ setTimeout(()=>location.reload(),3000); }
-}
-async function adminClearCache(){
-  document.getElementById('admin-drop').classList.remove('show');
-  if('serviceWorker' in navigator && 'caches' in window){
-    const keys=await caches.keys();
-    await Promise.all(keys.map(k=>caches.delete(k)));
-    const reg=await navigator.serviceWorker.getRegistration();
-    if(reg) await reg.unregister();
-    showToast('Cache vidé — rechargement…');
-    setTimeout(()=>location.reload(true),1000);
-  }else{ showToast('Cache SW non disponible.'); }
-}
-function adminLogout(){
-  document.getElementById('admin-drop').classList.remove('show');
-  localStorage.removeItem('ada_token');
-  document.cookie='ada_token=; path=/; SameSite=Strict; Max-Age=0';
-  location.reload();
-}
-
-// ── Nav expand ─────────────────────────────────────────────────
-let _navExpanded=false;
-function toggleNav(){
-  _navExpanded=!_navExpanded;
-  document.getElementById('app').classList.toggle('nav-expanded',_navExpanded);
-  const tog=document.getElementById('nav-toggle');
-  // Met à jour l'icône (premier nœud texte)
-  tog.childNodes[0].textContent=_navExpanded?'✕':'☰';
-}
-
-// ── View overlay ───────────────────────────────────────────────
-const _viewTitles={'settings':'Paramètres','profile-editor':'Profils & Univers'};
-let _viewMounted=null;
-async function openView(name){
-  const overlay=document.getElementById('view-overlay');
-  const body=document.getElementById('view-body');
-  const titleEl=document.getElementById('view-title-label');
-  body.innerHTML='<p style="padding:24px;color:var(--text-dim);font-size:12px">Chargement…</p>';
-  titleEl.textContent=_viewTitles[name]||name;
-  overlay.classList.add('show');
-  try{
-    const {mount}=await import(`/static/views/${name}/index.js`);
-    body.innerHTML='';
-    _viewMounted=await mount(body,{token:_getToken()});
-  }catch(e){
-    body.innerHTML=`<p style="padding:24px;color:var(--text-dim);font-size:12px">Vue "${name}" non disponible.</p>`;
-    console.error('openView',name,e);
-  }
-}
-function closeView(){
-  document.getElementById('view-overlay').classList.remove('show');
-  _viewMounted=null;
-}
-
-// ── Lazy sub-view loader ──────────────────────────────────────────
-async function _loadSubView(subId,viewName,opts={}){
-  const el=document.getElementById(subId);
-  if(!el||el.dataset.loaded)return;
-  el.dataset.loaded='1';
-  el.innerHTML='<p style="padding:24px;color:var(--text-dim);font-size:12px">Chargement…</p>';
-  try{
-    const{mount}=await import(`/static/views/${viewName}/index.js`);
-    el.innerHTML='';
-    await mount(el,{token:_getToken(),...opts});
-  }catch(e){
-    el.innerHTML=`<p style="padding:24px;color:var(--text-dim);font-size:12px">Erreur : ${e.message}</p>`;
-    el.dataset.loaded='';
-    console.error('_loadSubView',viewName,e);
-  }
-}
-
-// ── adaNavigate — pont pour les vues qui appellent switchView ────
-const _V2U={
-  dashboard:'dash',
-  cameras:  ['home','sub-cameras'],
-  marketing:['co','sub-mkt'],
-  briefing: ['plan','sub-briefing'],
-  planner:  ['plan','sub-agenda'],
-  memory:   ['tools','sub-mem'],
-  societe:  'co',
-};
-// ── Contextes par univers ─────────────────────────────────────────
-const _UNI_CTX={
-  dash:{label:'Dashboard',domain:'general',text:null,
-    qps:['État général','Alertes actives ?','Résumé du jour','Tâches en cours ?']},
-  home:{label:'Maison',domain:'maison',
-    text:"L'utilisateur est dans l'univers Maison. Tu es l'assistant domotique de la maison. Oriente tes réponses sur la domotique, les équipements connectés, les caméras, la météo, la musique et les automatisations.",
-    qps:['État des lumières','Mode nuit','Température ?','Caméras actives ?']},
-  plan:{label:'Planification',domain:'planning',
-    text:"L'utilisateur est dans l'univers Planification. Aide-le sur l'agenda, les tâches, les projets et les rappels.",
-    qps:['Tâches du jour','Réunions cette semaine ?','Prochaine échéance ?','Résume le planning']},
-  tools:{label:'Outils',domain:'tools',
-    text:"L'utilisateur est dans l'univers Outils. Aide-le sur les compétences IA, la mémoire, les paramètres et les configurations techniques.",
-    qps:["Skills actives ?",'État mémoire','Paramètres actuels','Aide configuration']},
-};
-// ── Société chat context bridge ─────────────────────────────────
-let _socCompanies=[],_socCtxId=null;
-let _activeCtxText='',_activeDomain=null;
-window.adaSocSetCompanies=function(companies){
-  _socCompanies=companies||[];
-  if(_activeUni==='co')_renderSocieteCtxBar();
-};
-function _renderSocieteCtxBar(){
-  const bar=document.getElementById('ctx-bar');
-  const qbar=document.getElementById('quick-bar');
-  if(!bar)return;
-  const btns=[{id:null,name:'Tout',color:'rgba(255,255,255,0.4)'},..._socCompanies];
-  bar.innerHTML='<span class="ctx-lbl">CONTEXTE ACTIF</span>'+btns.map(c=>
-    `<button class="ctx-tag ct-co${c.id===_socCtxId?' on':''}" data-socid="${c.id||''}" onclick="socSetCtx(this,'${c.id||''}')"><span class="ctx-dot" style="background:${c.color||'rgba(255,255,255,0.4)'}"></span>${c.name}</button>`
-  ).join('');
-  if(qbar){
-    const qps=_socCtxId
-      ?['Résume la situation','Quels impayés ?','Tickets ouverts ?','Prochain devis ?']
-      :['État des sociétés','Alertes en cours ?','Total impayés ?','Tickets ouverts ?'];
-    qbar.innerHTML=qps.map(p=>`<button class="qp" onclick="inject('${p}')">${p}</button>`).join('');
-  }
-}
-function _renderUniCtxBar(id){
-  const ctx=_UNI_CTX[id]||_UNI_CTX.dash;
-  const bar=document.getElementById('ctx-bar');
-  const qbar=document.getElementById('quick-bar');
-  if(bar)bar.innerHTML='<span class="ctx-lbl">CONTEXTE ACTIF</span><div class="ctx-tag on" style="pointer-events:none">'+ctx.label+'</div>';
-  if(qbar)qbar.innerHTML=ctx.qps.map(p=>'<button class="qp" onclick="inject(\''+p+'\')">'+ p+'</button>').join('');
-}
-function _renderDefaultCtxBar(){_renderUniCtxBar('dash');}
-async function socSetCtx(btn,cid){
-  _socCtxId=cid||null;
-  _activeCtxText='';
-  _activeDomain=_socCtxId||'societe';
-  if(_socCtxId){
-    try{
-      const r=await fetch(`/api/societe/companies/${_socCtxId}/context`,{headers:{'Authorization':'Bearer '+_getToken()}});
-      if(r.ok){
-        const d=await r.json();
-        _activeCtxText=d.context||(typeof d==='string'?d:JSON.stringify(d));
-      }
-    }catch{}
-  }
-  _renderSocieteCtxBar();
-}
-
-window.adaNavigate=function(viewName){
-  if(viewName==='settings'||viewName==='profile-editor'){openView(viewName);return;}
-  const t=_V2U[viewName];
-  if(!t){try{openView(viewName);}catch(e){}return;}
-  if(Array.isArray(t)){
-    const[uni,sub]=t;
-    const uniBtn=document.querySelector(`[data-uni="${uni}"]`);
-    if(uniBtn)goUni(uni,uniBtn);
-    setTimeout(()=>{
-      const stabEl=document.querySelector(`[onclick*="${sub}"]`);
-      if(stabEl)goSub(stabEl,sub);
-    },80);
-  }else{
-    const uniBtn=document.querySelector(`[data-uni="${t}"]`);
-    if(uniBtn)goUni(t,uniBtn);
-  }
-};
-
-// ── Shopping ───────────────────────────────────────────────────
+// ── Shopping ────────────────────────────────────────────────────
 function toggleShop(el){
   const done=el.style.opacity==='.45'||el.style.opacity==='0.45';
   el.style.opacity=done?'1':'.45';
@@ -1652,14 +1048,61 @@ function toggleShop(el){
     chk.textContent='✓';
     chk.style.cssText='width:15px;height:15px;border-radius:4px;background:var(--green);border:1px solid var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px;color:#000';
     name.style.textDecoration='line-through';
-  }else{
+  } else {
     chk.textContent='';
     chk.style.cssText='width:15px;height:15px;border-radius:4px;border:1px solid var(--border-hi);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:10px';
     name.style.textDecoration='none';
   }
 }
 
-// ── Sparklines ─────────────────────────────────────────────────
+// ── Chat ────────────────────────────────────────────────────────
+const msgs=document.getElementById('chat-msgs');
+const input=document.getElementById('chat-input');
+
+function inject(t){input.value=t;input.focus();autoResize(input);}
+function autoResize(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,80)+'px';}
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg();}}
+
+const replies={
+  'serveur':'Proxmox 12/12 ✓ — Node1 CPU 18%, Node2 9%. NAS 14.2/20TB. Nominal.',
+  'backup':'18/18 ✓. Durée 2h14, zstd, 0 erreur. Prochain cycle cette nuit à 02:00.',
+  'nuit':'Mode Nuit activé. Lumières off, thermostat 18°C, portail verrouillé, alarme armée.',
+  'alert':'3 alertes — 1. Dupont SA: C: 91% | 2. Martin & Fils: SVC_BACKUP arrêté 23min | 3. Switch salon (résolu)',
+  'focus':'Mode Focus activé. Bureau 100%, 20°C, notifs suspendues 2h.',
+  'relax':'Mode Relax activé. Lumières 40%, 21°C.',
+  'brief':'Briefing 31 Mai — 3 alertes actives, backups OK. Rien de critique.',
+  'rapport':'Génération rapport en cours… Je reviens dans quelques secondes.',
+};
+function getReply(t){
+  const l=t.toLowerCase();
+  for(const[k,v]of Object.entries(replies))if(l.includes(k))return v;
+  return 'Bien reçu. Je traite avec le contexte actif — un instant.';
+}
+function appendMsg(t,who){
+  const d=document.createElement('div');
+  d.className='msg msg-'+who;
+  if(who==='ada')d.innerHTML='<div class="from"></div>'+t.replace(/\n/g,'<br>');
+  else d.textContent=t;
+  msgs.appendChild(d);
+  msgs.scrollTop=msgs.scrollHeight;
+}
+function sendMsg(){
+  const t=input.value.trim();if(!t)return;
+  appendMsg(t,'user');
+  input.value='';input.style.height='auto';
+  const ty=document.getElementById('typing');
+  ty.classList.add('on');msgs.scrollTop=msgs.scrollHeight;
+  setTimeout(()=>{ty.classList.remove('on');appendMsg(getReply(t),'ada');},800+Math.random()*500);
+}
+function confirmAct(btn){
+  btn.closest('.action-card').innerHTML='<span style="color:var(--green)">✓ Confirmé — exécution en cours…</span>';
+  setTimeout(()=>appendMsg('Backup lancé ✓ — Job #4821 · durée estimée 12 min.','ada'),1200);
+}
+function cancelAct(btn){
+  btn.closest('.action-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
+}
+
+// ── Sparklines ────────────────────────────────────────────────
 function drawSpark(id,data,color){
   const c=document.getElementById(id);if(!c)return;
   const ctx=c.getContext('2d');
@@ -1690,14 +1133,6 @@ function drawSparks(){
 }
 setTimeout(drawSparks,100);
 window.addEventListener('resize',drawSparks);
-
-// ── Init ───────────────────────────────────────────────────────
-// Initialise le ctx-bar immédiatement (avant l'auth) pour éviter l'affichage des tags statiques
-try{_renderUniCtxBar('dash');}catch(e){}
-(async()=>{
-  const ok=await _checkAuth();
-  if(!ok){await _showAuth();}else{await _onAuthenticated();}
-})();
 </script>
 </body>
 </html>
