@@ -313,15 +313,7 @@ function _renderHome(data, el) {
     </span>`;
   }).join('');
 
-  // ── 2. Scènes (exécution directe via /api/scene/<name>) ─────────────────
-  const SCENES = [
-    { label:'🎯 Focus', scene:'focus', on:true },
-    { label:'🌊 Relax', scene:'relax' },
-    { label:'🌙 Nuit',  scene:'nuit' },
-    { label:'💡 Off',   scene:'off_lights' },
-  ];
-
-  // ── 3. Entités par catégorie ──────────────────────────────────────────────
+  // ── 2. Entités par catégorie ──────────────────────────────────────────────
   const domo_scenes    = entities.filter(e => e.type === 'scene');
   const controllable   = entities.filter(e => ['light','switch'].includes(e.type));
   const informational  = entities.filter(e => !['light','switch','scene'].includes(e.type));
@@ -361,17 +353,13 @@ function _renderHome(data, el) {
     <div class="domo-wrap">
       ${providers.length ? `<div class="domo-prov-bar">${provBadges}</div>` : ''}
       <div class="sec">Scènes</div>
-      <div class="scene-row" id="domo-scenes">
-        ${SCENES.map(s => `<button class="scene-btn${s.on ? ' on' : ''}" data-scene="${escapeHtml(s.scene)}">${s.label}</button>`).join('')}
+      <div class="scene-row" id="domo-entity-scenes">
+        ${domoSceneItems || '<span style="color:var(--text-dim);font-size:11px">Aucune scène disponible</span>'}
       </div>
       ${controllable.length ? `
         <div class="sec">Groupes &amp; Appareils</div>
         <div class="toggle-grid domo-3col" id="domo-toggles">${toggleItems}</div>
       ` : `<p class="page-muted" style="margin-top:12px">Aucune entité contrôlable. Vérifiez la configuration des providers.</p>`}
-      ${domoSceneItems ? `
-        <div class="sec" style="margin-top:16px">Scènes Domoticz</div>
-        <div class="scene-row" id="domo-entity-scenes">${domoSceneItems}</div>
-      ` : ''}
       ${infoPanels}
     </div>
     <style>
@@ -381,19 +369,6 @@ function _renderHome(data, el) {
       .domo-3col{grid-template-columns:1fr 1fr 1fr}
       @media(max-width:700px){.domo-3col{grid-template-columns:1fr 1fr}}
     </style>`;
-
-  // Scènes HA (hardcodées) : click → POST /api/scene/<name>
-  el.querySelector('#domo-scenes').addEventListener('click', e => {
-    const btn = e.target.closest('.scene-btn');
-    if (!btn) return;
-    el.querySelectorAll('#domo-scenes .scene-btn').forEach(b => b.classList.remove('on'));
-    btn.classList.add('on');
-    const scene = btn.dataset.scene;
-    fetch(`/api/scene/${encodeURIComponent(scene)}`, { method: 'POST' })
-      .then(r => r.json())
-      .then(d => { if (!d.ok) btn.classList.remove('on'); })
-      .catch(() => btn.classList.remove('on'));
-  });
 
   // Scènes Domoticz : click → POST /api/entity/<id>/toggle (on=true = activate)
   const domoSceneBar = el.querySelector('#domo-entity-scenes');
@@ -610,12 +585,12 @@ export async function mount(vp, opts = {}) {
 
   _root.innerHTML = `
     <div class="page-shell">
-      <div class="page-top">
+      ${pageKey === 'home' ? '' : `<div class="page-top">
         <h2 class="page-title">${escapeHtml(label || pageKey)}</h2>
         <p class="page-desc">${escapeHtml(cfg.description)}</p>
-      </div>
+      </div>`}
       <div class="page-data-wrap" id="page-data-wrap"></div>
-      <div class="page-actions">${actionsHtml}</div>
+      ${pageKey === 'home' ? '' : `<div class="page-actions">${actionsHtml}</div>`}
     </div>`;
 
   vp.appendChild(_root);
