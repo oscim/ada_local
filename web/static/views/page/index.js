@@ -321,9 +321,16 @@ function _renderHome(data, el) {
     { label:'💡 Off',   scene:'off_lights' },
   ];
 
-  // ── 3. Appareils contrôlables (lumières + switches) → toggle-grid ────────
-  const controllable  = entities.filter(e => ['light','switch'].includes(e.type));
-  const informational = entities.filter(e => !['light','switch'].includes(e.type));
+  // ── 3. Entités par catégorie ──────────────────────────────────────────────
+  const domo_scenes    = entities.filter(e => e.type === 'scene');
+  const controllable   = entities.filter(e => ['light','switch'].includes(e.type));
+  const informational  = entities.filter(e => !['light','switch','scene'].includes(e.type));
+
+  // Scènes Domoticz → boutons d'activation (1 clic, pas de toggle)
+  const domoSceneItems = domo_scenes.map(e => {
+    const isOn = e.state === 'on';
+    return `<button class="scene-btn${isOn ? ' on' : ''}" data-entity-id="${escapeHtml(e.id)}">${escapeHtml(e.name)}</button>`;
+  }).join('');
 
   const toggleItems = controllable.map(e => {
     const isOn = e.state === 'on';
@@ -358,9 +365,13 @@ function _renderHome(data, el) {
         ${SCENES.map(s => `<button class="scene-btn${s.on ? ' on' : ''}" data-scene="${escapeHtml(s.scene)}">${s.label}</button>`).join('')}
       </div>
       ${controllable.length ? `
-        <div class="sec">Appareils</div>
+        <div class="sec">Groupes &amp; Appareils</div>
         <div class="toggle-grid domo-3col" id="domo-toggles">${toggleItems}</div>
       ` : `<p class="page-muted" style="margin-top:12px">Aucune entité contrôlable. Vérifiez la configuration des providers.</p>`}
+      ${domoSceneItems ? `
+        <div class="sec" style="margin-top:16px">Scènes Domoticz</div>
+        <div class="scene-row" id="domo-entity-scenes">${domoSceneItems}</div>
+      ` : ''}
       ${infoPanels}
     </div>
     <style>
@@ -371,7 +382,7 @@ function _renderHome(data, el) {
       @media(max-width:700px){.domo-3col{grid-template-columns:1fr 1fr}}
     </style>`;
 
-  // Scènes : click → POST /api/scene/<name>
+  // Scènes HA (hardcodées) : click → POST /api/scene/<name>
   el.querySelector('#domo-scenes').addEventListener('click', e => {
     const btn = e.target.closest('.scene-btn');
     if (!btn) return;
@@ -384,7 +395,28 @@ function _renderHome(data, el) {
       .catch(() => btn.classList.remove('on'));
   });
 
-  // Toggles : click → POST /api/entity/<id>/toggle
+  // Scènes Domoticz : click → POST /api/entity/<id>/toggle (on=true = activate)
+  const domoSceneBar = el.querySelector('#domo-entity-scenes');
+  if (domoSceneBar) {
+    domoSceneBar.addEventListener('click', e => {
+      const btn = e.target.closest('.scene-btn');
+      if (!btn) return;
+      const id = btn.dataset.entityId;
+      if (!id) return;
+      btn.classList.add('on');
+      fetch(`/api/entity/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: true }),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) btn.classList.remove('on');
+        // Retire le highlight après 2s (scène = action ponctuelle)
+        setTimeout(() => btn.classList.remove('on'), 2000);
+      }).catch(() => btn.classList.remove('on'));
+    });
+  }
+
+  // Toggles groupes/appareils : click → POST /api/entity/<id>/toggle
   const grid = el.querySelector('#domo-toggles');
   if (grid) {
     grid.addEventListener('click', e => {
@@ -396,7 +428,7 @@ function _renderHome(data, el) {
       const isOn = sw.classList.toggle('on');
       fetch(`/api/entity/${encodeURIComponent(id)}/toggle`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('ada_token') || ''}` },
         body: JSON.stringify({ on: isOn }),
       }).then(r => r.json()).then(d => {
         if (!d.ok) sw.classList.toggle('on'); // rollback si échec

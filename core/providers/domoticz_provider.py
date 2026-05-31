@@ -45,7 +45,9 @@ def _domoticz_to_entity_type(d_type: str, switch_type: int | None) -> str:
                   "Wind", "Rain", "UV", "Air Quality",
                   "Lux", "Barometer", "Usage", "Energy", "Current"):
         return "sensor"
-    if d_type in ("Scene", "Group"):
+    if d_type == "Scene":
+        return "scene"
+    if d_type == "Group":
         return "switch"
     if d_type.startswith("Lighting"):
         return "switch"
@@ -64,6 +66,8 @@ class DomoticzProvider(BaseProvider):
     PROVIDER_ID = "domoticz"
 
     def __init__(self) -> None:
+        self._idx_type_map: dict[str, str] = {}    # idx → domoticz_type
+        self._idx_subtype_map: dict[str, str] = {}  # idx → domoticz_subtype
         self._provider = Provider(
             id=self.PROVIDER_ID,
             name="Domoticz",
@@ -94,11 +98,14 @@ class DomoticzProvider(BaseProvider):
             return []
 
         entities: list[Entity] = []
+        self._idx_type_map = {}  # reset à chaque fetch
         for dev in raw_devices:
             idx = str(dev.get("idx", ""))
             name = dev.get("Name", idx)
             d_type = dev.get("Type", "")
+            self._idx_type_map[idx] = d_type
             subtype = dev.get("SubType", "")
+            self._idx_subtype_map[idx] = subtype
 
             # Normalisation du SwitchType (int ou absent)
             switch_type_raw = dev.get("SwitchType")
@@ -184,7 +191,16 @@ class DomoticzProvider(BaseProvider):
     def toggle(self, provider_entity_id: str, on: bool) -> bool:
         try:
             from core.domoticz_control import domoticz_manager
-            return domoticz_manager.switch_device(provider_entity_id, on)
+            idx       = str(provider_entity_id)
+            d_type    = self._idx_type_map.get(idx, "")
+            d_subtype = self._idx_subtype_map.get(idx, "")
+            if d_type in ("Scene", "Group"):
+                return domoticz_manager.switch_scene_or_group(idx, on)
+            # Relais impulsionnels : switchcmd=Off ne transmet pas de signal RF
+            # → seule la commande Toggle envoie l'impulsion physique
+            if d_subtype == "Impuls":
+                return domoticz_manager.switch_toggle(idx)
+            return domoticz_manager.switch_device(idx, on)
         except Exception as e:
             print(f"[DomoticzProvider] toggle({provider_entity_id}, {on}) failed: {e}")
             return False
