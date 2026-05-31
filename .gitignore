@@ -24,3 +24,7 @@ __pycache__/
 data/chat_history.db
 
 skills/user_profile/SKILL.md
+
+# Configs locales avec données réelles (URLs, overrides)
+config/custom_endpoints.json
+config/service_overrides.json
