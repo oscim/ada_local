@@ -108,6 +108,10 @@ if _MODULES_ENABLED.get("societe", False):
     from web.router_societe import router as _societe_router
     app.include_router(_societe_router)
 
+# router_plugins : toujours actif — retourne liste vide si aucun plugin enregistré
+from web.router_plugins import router as _plugins_router
+app.include_router(_plugins_router)
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -203,9 +207,11 @@ async def index():
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
-    message: str
-    history: list[dict] = []
-    company_context: str | None = None
+    message:         str
+    history:         list[dict] = []
+    company_context: str | None = None   # compat existant
+    plugin_context:  str | None = None   # NOUVEAU : univers actif
+    context_id:      str | None = None   # NOUVEAU : sous-contexte
 
 
 @app.post("/api/chat")
@@ -217,7 +223,13 @@ async def chat(req: ChatRequest):
     """
     async def _sse():
         try:
-            async for chunk in process_message(req.message, req.history, company_context=req.company_context):
+            async for chunk in process_message(
+                req.message,
+                req.history,
+                company_context=req.company_context,
+                plugin_context=req.plugin_context,
+                context_id=req.context_id,
+            ):
                 if chunk.startswith('\x00img\x00'):
                     img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
                     yield f"data: {json.dumps({'img_url': img_url})}\n\n"

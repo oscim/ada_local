@@ -447,14 +447,23 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
         yield f"Erreur lors de la recherche web : {e}"
 
 
-def _system_prompt() -> str:
-    return (
+def _system_prompt(plugin_context_id: str | None = None) -> str:
+    """System prompt de base, enrichi des capacités des plugins actifs."""
+    base = (
         "Tu es ADA, une assistante IA locale. "
         "Réponds TOUJOURS en français. "
         "RÈGLE ABSOLUE : réponses courtes, 1 à 3 phrases max. "
         "Pas d'intro, pas de conclusion, pas de présentation de toi-même. "
         "Va directement à la réponse."
     )
+    try:
+        from core.plugin_registry import plugin_registry as _pr
+        injection = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
+        if injection:
+            base += f"\n\n### Capacités disponibles ###\n{injection}"
+    except Exception:
+        pass
+    return base
 
 
 def _format_entities_context() -> str:
@@ -545,28 +554,53 @@ async def _call_llm(messages: list[dict], thinking: bool = False) -> str:
         return r.json().get("message", {}).get("content", "").strip()
 
 
-async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
-    """Tool-calling aligné avec l'app: outils complets + fallback passthrough."""
+async def _call_with_tools(
+    text: str,
+    conversation_messages: list[dict],
+    plugin_context_id: str | None = None,
+) -> str:
+    """
+    Tool-calling avec fonctions natives + fonctions des plugins actifs.
+    Pipeline : LLM → plugin_registry.dispatch_action() → n8n_executor → function_executor.
+    Les actions x_confirm_required retournent un token __confirm__ au lieu d'exécuter.
+    """
+    from config import FUNCTIONS as _FUNCTIONS
+    from core.plugin_registry import plugin_registry as _pr
+    from core.n8n_executor import n8n_executor
+
+    # Fonctions effectives = natives + plugins actifs
+    plugin_functions = _pr.combined_function_definitions()
+    effective_functions = _FUNCTIONS + plugin_functions
+
+    # System prompt dispatcher incluant les capacités plugins
+    plugin_sys = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
+    dispatcher_system = (
+        "You are a function dispatcher. You MUST call one of the available tools. "
+        "NEVER respond with plain text. "
+        "For greetings or conversational questions: call passthrough.\n\n"
+        "Tool selection rules:\n"
+        "- control_light: ANY light/lamp/room lighting request\n"
+        "- set_timer: countdown timers\n"
+        "- shell_exec: system commands\n"
+        "- web_search: internet searches\n"
+        "- passthrough: ONLY for greetings, chitchat, or questions needing no action."
+    )
+    if plugin_sys:
+        dispatcher_system += f"\n\nActive plugin capabilities:\n{plugin_sys}"
+
     try:
         async with httpx.AsyncClient(timeout=150.0) as client:
             r = await client.post(
                 _chat_url(),
                 json={
-                    "model": _chat_model(),
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a function dispatcher. You MUST call one of the available tools. "
-                                "NEVER respond with plain text. "
-                                "For greetings or conversational questions: call passthrough."
-                            ),
-                        },
-                        {"role": "user", "content": text},
+                    "model":      _chat_model(),
+                    "messages":   [
+                        {"role": "system", "content": dispatcher_system},
+                        {"role": "user",   "content": text},
                     ],
-                    "tools": FUNCTIONS,
-                    "stream": False,
-                    "think": False,
+                    "tools":      effective_functions,
+                    "stream":     False,
+                    "think":      False,
                     "keep_alive": "5m",
                 },
             )
@@ -578,23 +612,44 @@ async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
     if not tool_calls:
         return await _call_llm(conversation_messages, thinking=False)
 
-    call = tool_calls[0]
+    call      = tool_calls[0]
     func_name = call.get("function", {}).get("name", "")
-    params = call.get("function", {}).get("arguments", {}) or {}
+    params    = call.get("function", {}).get("arguments", {}) or {}
 
     if func_name == "passthrough":
         thinking = bool(params.get("thinking", False))
         return await _call_llm(conversation_messages, thinking=thinking)
 
-    result = function_executor.execute(func_name, params)
-    success = result.get("success", False)
+    # ── Vérification confirmation requise ─────────────────────────────────────
+    func_def = next(
+        (f for f in effective_functions if f["function"]["name"] == func_name),
+        None,
+    )
+    if func_def and func_def["function"].get("x_confirm_required"):
+        confirm_msg = func_def["function"].get(
+            "x_confirm_message", f"Confirmer {func_name} ?"
+        )
+        return f"__confirm__{func_name}|{confirm_msg}|{json.dumps(params)}"
+
+    # ── Dispatch : plugin → n8n → function_executor ───────────────────────────
+    plugin_result = _pr.dispatch_action(func_name, params)
+    if plugin_result is not None:
+        result = plugin_result
+    else:
+        action = func_name.replace("_", "-")
+        result = n8n_executor.call(action, params)
+
+    success    = result.get("success", False)
     result_msg = result.get("message", "")
 
     followup = list(conversation_messages)
     hint = f"[Résultat: {'succès' if success else 'échec'}. {result_msg}]"
     followup[-1] = {
-        "role": "user",
-        "content": f"{text}\n{hint}\nRéponds en français de façon naturelle et concise.",
+        "role":    "user",
+        "content": (
+            f"{text}\n{hint}\n"
+            "Réponds en français de façon naturelle et concise."
+        ),
     }
     return await _call_llm(followup, thinking=False)
 
@@ -605,7 +660,9 @@ async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
 async def process_message(
     message: str,
     history: list[dict],
-    company_context: str | None = None,
+    company_context: str | None = None,   # compat existant — filtre infra
+    plugin_context:  str | None = None,   # NOUVEAU : univers actif ("home", "opent"…)
+    context_id:      str | None = None,   # NOUVEAU : sous-contexte (company_id, etc.)
 ) -> AsyncGenerator[str, None]:
     """
     Route et traite un message, yield les chunks de réponse au fil de l'eau.
@@ -615,6 +672,8 @@ async def process_message(
     user_text = (message or "").strip()
     if not user_text:
         return
+
+    _effective_ctx = context_id or company_context or None
 
     text_lower = user_text.lower()
 
@@ -762,7 +821,7 @@ async def process_message(
         return
 
     # Contexte conversationnel de base
-    messages: list[dict] = [{"role": "system", "content": _system_prompt()}]
+    messages: list[dict] = [{"role": "system", "content": _system_prompt(_effective_ctx)}]
     messages.extend(history[-20:])
 
     # Injection du contexte domotique si la question concerne les entités
@@ -800,9 +859,22 @@ async def process_message(
 
     # function_gemma: tool-calling complet puis réponse naturelle
     if route == "function_gemma":
-        response = await _call_with_tools(user_text, messages)
+        response = await _call_with_tools(user_text, messages, plugin_context_id=_effective_ctx)
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", response)
+        if response and response.startswith("__confirm__"):
+            _, payload = response.split("__confirm__", 1)
+            parts           = payload.split("|", 2)
+            confirm_func    = parts[0] if len(parts) > 0 else ""
+            confirm_message = parts[1] if len(parts) > 1 else "Confirmer ?"
+            confirm_params  = parts[2] if len(parts) > 2 else "{}"
+            yield json.dumps({
+                "__type":  "confirm_required",
+                "func":    confirm_func,
+                "message": confirm_message,
+                "params":  confirm_params,
+            })
+            return
         if response:
             yield response
         return
