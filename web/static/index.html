@@ -1438,8 +1438,17 @@ function goUni(id,btn){
   document.getElementById('bc-sep').style.display='none';
   document.getElementById('bc-sub').style.display='none';
   _activeUni=id;_activeSub='';
-  if(id==='dash') _loadSubView('uni-dash-content','dashboard');
-  if(id==='co')   _loadSubView('uni-co','societe');
+  if(id==='dash'){ _loadSubView('uni-dash-content','dashboard'); }
+  else if(id==='co'){ _loadSubView('uni-co','societe'); }
+  else if(panel){
+    // Auto-charge le premier sous-onglet pour les autres univers (home, plan, tools…)
+    const firstStab=panel.querySelector('.stab');
+    if(firstStab){
+      const onclickAttr=firstStab.getAttribute('onclick');
+      const match=onclickAttr&&onclickAttr.match(/goSub\(this,'([^']+)'\)/);
+      if(match) goSub(firstStab, match[1]);
+    }
+  }
   _renderPluginCtxBar(id);
 }
 

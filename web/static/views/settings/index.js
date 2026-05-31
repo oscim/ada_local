@@ -182,6 +182,11 @@ function _mkModules() {
   </div>`;
 }
 
+// ── Panel Plugins ────────────────────────────────────────────
+function _panelPlugins() {
+  return _mkModules();
+}
+
 // ── Panels ────────────────────────────────────────────────────
 function _panelAccueil() {
   return [
@@ -193,8 +198,6 @@ function _panelAccueil() {
       ]),
       _mkSelect('theme', 'Thème', 'Apparence de l\'application', ['Light','Dark','Auto']),
     ].join('')),
-
-    _mkModules(),
 
     _sec('Météo', [
       _mkText('weather.city', 'Ville', 'Nom affiché dans le briefing', 'Paris, FR'),
@@ -509,21 +512,25 @@ async function _buildHTML() {
     _panelAuth(),
     _panelSociete(),
   ]);
+  // Visibilité initiale des onglets selon les modules actifs
+  const _tabVis = (mod) => _get(`modules.${mod}`) ? '' : 'display:none';
   return `
 <div class="settings-wrap">
   <div class="s-tabbar">
     <button class="s-tab active" data-panel="general">🏠 Accueil</button>
+    <button class="s-tab" data-panel="plugins">🧩 Plugins</button>
     <button class="s-tab" data-panel="llm">🤖 LLM</button>
-    <button class="s-tab" data-panel="domotique">💡 Domotique</button>
-    <button class="s-tab" data-panel="print3d">🖨 Impression 3D</button>
-    <button class="s-tab" data-panel="music">🎵 Musique</button>
-    <button class="s-tab" data-panel="bibliotheque">📚 Bibliothèque</button>
-    <button class="s-tab" data-panel="societe">🏢 Sociétés</button>
+    <button class="s-tab" data-mod-tab="domotique" data-panel="domotique" style="${_tabVis('domotique')}">💡 Domotique</button>
+    <button class="s-tab" data-mod-tab="print3d" data-panel="print3d" style="${_tabVis('print3d')}">🖨 Impression 3D</button>
+    <button class="s-tab" data-mod-tab="music" data-panel="music" style="${_tabVis('music')}">🎵 Musique</button>
+    <button class="s-tab" data-mod-tab="bibliotheque" data-panel="bibliotheque" style="${_tabVis('bibliotheque')}">📚 Bibliothèque</button>
+    <button class="s-tab" data-mod-tab="societe" data-panel="societe" style="${_tabVis('societe')}">🏢 Sociétés</button>
     <button class="s-tab" data-panel="auth">🔐 Auth</button>
     <span class="s-save-dot" id="s-savedot"></span>
   </div>
   <div class="s-panels">
     <div class="s-panel active" id="panel-general">${_panelAccueil()}</div>
+    <div class="s-panel" id="panel-plugins">${_panelPlugins()}</div>
     <div class="s-panel" id="panel-llm">${_panelLLM()}</div>
     <div class="s-panel" id="panel-domotique">${_panelDomotique()}</div>
     <div class="s-panel" id="panel-print3d">${_panelPrint3D()}</div>
@@ -766,6 +773,7 @@ async function _loadModels(root) {
 
 // ── Nav module visibility ─────────────────────────────────────
 export function applyModuleVisibility() {
+  // Visibilité des éléments de navigation principaux
   const map = {
     domotique:    ['[data-page="home"]', '[data-view="cameras"]'],
     print3d:      ['[data-page="printers"]', '[data-page="cad"]'],
@@ -779,6 +787,23 @@ export function applyModuleVisibility() {
         el.style.display = on ? '' : 'none';
       });
     });
+  });
+
+  // Visibilité des onglets de configuration dans les Paramètres
+  if (!_root) return;
+  const modTabMap = ['domotique', 'print3d', 'music', 'bibliotheque', 'societe'];
+  modTabMap.forEach(mod => {
+    const on  = _get(`modules.${mod}`);
+    const tab = _root.querySelector(`[data-mod-tab="${mod}"]`);
+    if (!tab) return;
+    tab.style.display = on ? '' : 'none';
+    // Si cet onglet était actif et qu'on le masque → revenir sur Accueil
+    if (!on && tab.classList.contains('active')) {
+      _root.querySelectorAll('.s-tab').forEach(t => t.classList.remove('active'));
+      _root.querySelectorAll('.s-panel').forEach(p => p.classList.remove('active'));
+      _root.querySelector('[data-panel="general"]')?.classList.add('active');
+      _root.querySelector('#panel-general')?.classList.add('active');
+    }
   });
 }
 
@@ -1143,6 +1168,8 @@ export async function mount(container) {
   _bindEvents(container);
   _bindAuthEvents(container);
   _bindSocieteEvents(container);
+  // Appliquer la visibilité des onglets config selon modules actifs
+  applyModuleVisibility();
 
   // Show models count
   const countEl = container.querySelector('#models-count');
