@@ -255,6 +255,12 @@ async def chat(req: ChatRequest):
                 if chunk.startswith('\x00img\x00'):
                     img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
                     yield f"data: {json.dumps({'img_url': img_url})}\n\n"
+                elif chunk.startswith('\x00think\x00'):
+                    think_text = chunk[7:]  # \x00think\x00 = 7 chars
+                    yield f"data: {json.dumps({'thinking': think_text})}\n\n"
+                elif chunk.startswith('{"__type"'):
+                    # Carte de confirmation — envoyer directement sans double-wrapping
+                    yield f"data: {chunk}\n\n"
                 else:
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
         except Exception as exc:
@@ -267,6 +273,32 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+class ConfirmRequest(BaseModel):
+    func:   str
+    params: dict = {}
+
+
+@app.post("/api/plugins/confirm")
+async def plugins_confirm(req: ConfirmRequest, request: Request):
+    """Exécute une action Proxmox après confirmation de l'utilisateur."""
+    from core.plugin_registry import plugin_registry as _pr
+    from core.async_runner import run_async
+    # Sécurité : seules les fonctions à confirmation sont exécutables ici
+    _ALLOWED = {
+        "vm_backup", "vm_power", "vm_snapshot", "vm_restore",
+        "node_reboot", "pbs_backup_run", "pbs_restore",
+    }
+    if req.func not in _ALLOWED:
+        return {"success": False, "message": f"Action '{req.func}' non autorisée via cet endpoint."}
+    try:
+        result = _pr.dispatch_action(req.func, req.params)
+        if result is None:
+            return {"success": False, "message": "Plugin introuvable pour cette action."}
+        return result
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 @app.get("/api/status")

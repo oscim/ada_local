@@ -78,25 +78,38 @@ class ProxmoxClient:
     # ── VMs ───────────────────────────────────────────────────────────────────
 
     async def list_vms(self, node: str | None = None) -> list[dict]:
+        """Retourne les VMs QEMU + les containers LXC (CT) d'un node ou de tous les nodes."""
         if node:
-            vms = await self._get(f"/nodes/{node}/qemu") or []
-            for vm in vms:
+            qemu = await self._get(f"/nodes/{node}/qemu") or []
+            for vm in qemu:
                 vm["node"] = node
-            return vms
-        # Toutes les VMs de tous les nodes
+                vm["type"] = "qemu"
+            lxc = await self._get(f"/nodes/{node}/lxc") or []
+            for ct in lxc:
+                ct["node"] = node
+                ct["type"] = "lxc"
+            return qemu + lxc
+        # Tous les nodes
         nodes = await self.list_nodes()
-        all_vms: list[dict] = []
+        all_items: list[dict] = []
         for n in nodes:
             node_name = n["node"]
-            vms = await self._get(f"/nodes/{node_name}/qemu") or []
-            for vm in vms:
+            qemu = await self._get(f"/nodes/{node_name}/qemu") or []
+            for vm in qemu:
                 vm["node"] = node_name
-            all_vms.extend(vms)
-        return all_vms
+                vm["type"] = "qemu"
+            lxc = await self._get(f"/nodes/{node_name}/lxc") or []
+            for ct in lxc:
+                ct["node"] = node_name
+                ct["type"] = "lxc"
+            all_items.extend(qemu)
+            all_items.extend(lxc)
+        return all_items
 
-    async def vm_power(self, node: str, vmid: int, action: str) -> Any:
-        """action: start | stop | reboot | shutdown"""
-        return await self._post(f"/nodes/{node}/qemu/{vmid}/status/{action}")
+    async def vm_power(self, node: str, vmid: int, action: str, vm_type: str = "qemu") -> Any:
+        """action: start | stop | reboot | shutdown. vm_type: qemu | lxc"""
+        kind = "lxc" if vm_type == "lxc" else "qemu"
+        return await self._post(f"/nodes/{node}/{kind}/{vmid}/status/{action}")
 
     async def vm_snapshot(self, node: str, vmid: int, snapname: str, description: str = "") -> Any:
         return await self._post(f"/nodes/{node}/qemu/{vmid}/snapshot", {

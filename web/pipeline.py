@@ -87,6 +87,27 @@ _INFRA_TRIGGERS = frozenset(
     }
 )
 
+# Routing déterministe pour lister les VMs / CTs Proxmox
+# Exemples : "liste les VM", "liste mes CT de ot-mutu", "affiche les containers", "montre les VMs"
+_PROXMOX_VM_LIST_RE = re.compile(
+    r"\b(liste[rz]?|affiche[rz]?|montre[rz]?|show|donne[rz]?|voir|quels?|combien)\b"
+    r".*\b(vm|vms|ct|cts|lxc|qemu|container|conteneur|machine[s]?\s+virtuelle[s]?)\b",
+    re.IGNORECASE,
+)
+
+# Routing déterministe : backup Proxmox → génère directement une carte de confirmation
+# Exemples : "backup vm 112", "sauvegarde CT 105", "lance un backup de 112 sur nas-backup"
+_PROXMOX_BACKUP_RE = re.compile(
+    r"\b(backup|sauvegarder?|sauvegarde)\b.*\b(?:vm|ct|lxc|conteneur)?\s*(\d{2,4})\b",
+    re.IGNORECASE,
+)
+# Routing déterministe : power VM (start/stop/reboot) → carte de confirmation
+_PROXMOX_POWER_RE = re.compile(
+    r"\b(start|démarre[rz]?|stop|arrête[rz]?|éteins?|reboot|redémarre[rz]?)\b"
+    r".*\b(?:vm|ct|lxc|conteneur)?\s*(\d{2,4})\b",
+    re.IGNORECASE,
+)
+
 # Regex de routing déterministe pour la création de timers
 # "mets/ajoute/lance un timer de 10 minutes pour les pâtes", "lance un timer 30s"
 _TIMER_RE = re.compile(
@@ -645,25 +666,60 @@ async def _call_llm(messages: list[dict], thinking: bool = False) -> str:
         return r.json().get("message", {}).get("content", "").strip()
 
 
-async def _call_with_tools(
+def _extract_func_call(text: str, func_defs: list[dict]) -> tuple[str, dict]:
+    """
+    Fallback : tente de détecter un appel de fonction dans le texte brut du LLM
+    quand tool_calls est vide (ex: Mistral qui génère du texte Python au lieu de JSON).
+    """
+    known = {f["function"]["name"] for f in func_defs}
+    m = re.search(r'\b([a-z_]+)\s*\(', text)
+    if m and m.group(1) in known:
+        func_name = m.group(1)
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == '(':
+                depth += 1
+            elif text[i] == ')':
+                depth -= 1
+            if depth > 0:
+                i += 1
+        args_str = text[start:i].strip()
+        params: dict = {}
+        if args_str:
+            if args_str.startswith('{'):
+                try:
+                    params = json.loads(args_str)
+                except Exception:
+                    pass
+            else:
+                first_arg = args_str.strip('"\'').split(',')[0].strip('"\'').strip()
+                if first_arg:
+                    params = {"instance_id": first_arg}
+        return func_name, params
+    return "", {}
+
+
+async def _stream_with_tools(
     text: str,
     conversation_messages: list[dict],
     plugin_context_id: str | None = None,
-) -> str:
+) -> AsyncGenerator[str, None]:
     """
-    Tool-calling avec fonctions natives + fonctions des plugins actifs.
-    Pipeline : LLM → plugin_registry.dispatch_action() → n8n_executor → function_executor.
-    Les actions x_confirm_required retournent un token __confirm__ au lieu d'exécuter.
+    Version streaming de l'ancien _call_with_tools.
+    Yield :
+      - '\x00think\x00<msg>' : étapes de réflexion visibles
+      - '{"__type": "confirm_required", ...}' : carte de confirmation
+      - chunks de texte : réponse finale (streamée depuis Ollama)
     """
     from config import FUNCTIONS as _FUNCTIONS
     from core.plugin_registry import plugin_registry as _pr
     from core.n8n_executor import n8n_executor
 
-    # Fonctions effectives = natives + plugins actifs
     plugin_functions = _pr.combined_function_definitions()
     effective_functions = _FUNCTIONS + plugin_functions
 
-    # System prompt dispatcher incluant les capacités plugins
     plugin_sys = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
     dispatcher_system = (
         "You are a function dispatcher. You MUST call one of the available tools. "
@@ -674,10 +730,19 @@ async def _call_with_tools(
         "- set_timer: countdown timers\n"
         "- shell_exec: system commands\n"
         "- web_search: internet searches\n"
-        "- passthrough: ONLY for greetings, chitchat, or questions needing no action."
+        "- passthrough: ONLY for pure chitchat or greetings with NO possible action.\n"
+        "- vm_list: ANY request to list, show, display VMs, CTs, containers, machines on Proxmox\n"
+        "- vm_power: start/stop/reboot a VM or CT\n"
+        "- vm_backup: backup/save a VM or CT\n"
+        "- node_stats: stats, resources, CPU, RAM of a Proxmox node\n"
+        "- For any other plugin function listed in 'Active plugin capabilities' below: use it when appropriate.\n\n"
+        "IMPORTANT: If you cannot use the tool_calls format, respond with ONLY this JSON and nothing else:\n"
+        '{"function": "function_name", "arguments": {"key": "value"}}'
     )
     if plugin_sys:
         dispatcher_system += f"\n\nActive plugin capabilities:\n{plugin_sys}"
+
+    yield "\x00think\x00🔍 Sélection de l'outil…"
 
     try:
         async with httpx.AsyncClient(timeout=150.0) as client:
@@ -696,20 +761,52 @@ async def _call_with_tools(
                 },
             )
             r.raise_for_status()
-            tool_calls = r.json().get("message", {}).get("tool_calls", [])
+            msg = r.json().get("message", {})
+            tool_calls = msg.get("tool_calls", [])
     except Exception:
-        return await _call_llm(conversation_messages, thinking=False)
+        async for chunk in _stream_ollama(conversation_messages, thinking=False):
+            yield chunk
+        return
+
+    func_name = ""
+    params: dict = {}
 
     if not tool_calls:
-        return await _call_llm(conversation_messages, thinking=False)
-
-    call      = tool_calls[0]
-    func_name = call.get("function", {}).get("name", "")
-    params    = call.get("function", {}).get("arguments", {}) or {}
+        # Fallback 1 : détecter func_name(...) dans le texte généré
+        raw_text = msg.get("content", "")
+        func_name, params = _extract_func_call(raw_text, effective_functions)
+        if not func_name:
+            # Fallback 2 : détecter {"function": "...", "arguments": {...}} dans le texte
+            try:
+                m = re.search(r'\{[^{}]*"function"\s*:\s*"([^"]+)"[^{}]*\}', raw_text, re.DOTALL)
+                if not m:
+                    # Essai plus large avec objets imbriqués
+                    m = re.search(r'\{.*?"function"\s*:\s*"([^"]+)".*?\}', raw_text, re.DOTALL)
+                if m:
+                    parsed_json = json.loads(m.group())
+                    fn = parsed_json.get("function", "")
+                    known_names = {f["function"]["name"] for f in effective_functions}
+                    if fn in known_names:
+                        func_name = fn
+                        params = parsed_json.get("arguments", {}) or {}
+            except Exception:
+                pass
+        if func_name:
+            yield f"\x00think\x00🔧 Outil détecté : `{func_name}`"
+        else:
+            async for chunk in _stream_ollama(conversation_messages, thinking=False):
+                yield chunk
+            return
+    else:
+        call = tool_calls[0]
+        func_name = call.get("function", {}).get("name", "")
+        params = call.get("function", {}).get("arguments", {}) or {}
 
     if func_name == "passthrough":
         thinking = bool(params.get("thinking", False))
-        return await _call_llm(conversation_messages, thinking=thinking)
+        async for chunk in _stream_ollama(conversation_messages, thinking=thinking):
+            yield chunk
+        return
 
     # ── Vérification confirmation requise ─────────────────────────────────────
     func_def = next(
@@ -721,7 +818,6 @@ async def _call_with_tools(
             "x_confirm_message", f"Confirmer {func_name} ?"
         )
         confirm_cmd = func_def["function"].get("x_confirm_cmd", "")
-        # Interpoler les {param} avec les valeurs réelles
         try:
             confirm_msg = confirm_msg.format(**params)
         except Exception:
@@ -731,7 +827,16 @@ async def _call_with_tools(
                 confirm_cmd = confirm_cmd.format(**params)
         except Exception:
             pass
-        return f"__confirm__{func_name}|{confirm_msg}|{json.dumps(params)}|{confirm_cmd}"
+        yield json.dumps({
+            "__type":  "confirm_required",
+            "func":    func_name,
+            "message": confirm_msg,
+            "params":  json.dumps(params),
+            "cmd":     confirm_cmd,
+        })
+        return
+
+    yield f"\x00think\x00⚙️ Exécution de `{func_name}`…"
 
     # ── Dispatch : plugin → n8n → function_executor ───────────────────────────
     plugin_result = _pr.dispatch_action(func_name, params)
@@ -744,16 +849,28 @@ async def _call_with_tools(
     success    = result.get("success", False)
     result_msg = result.get("message", "")
 
+    if success and result_msg:
+        # Bypass total du LLM de followup pour éviter toute hallucination :
+        # le résultat est déjà formaté en markdown par handle_action.
+        yield "\x00think\x00✅ Données reçues"
+        yield result_msg
+        return
+
+    # Échec ou résultat vide : LLM formule un message d'erreur naturel (pas de données à inventer)
+    yield "\x00think\x00⚠️ Erreur lors de l'exécution"
     followup = list(conversation_messages)
-    hint = f"[Résultat: {'succès' if success else 'échec'}. {result_msg}]"
+    error_hint = (
+        f"[Résultat de l'action `{func_name}` : échec]\n"
+        f"{result_msg}\n\n"
+        "Explique cette erreur à l'utilisateur en français, de façon claire et concise. "
+        "Ne propose PAS de solution inventée, indique juste ce qui s'est passé."
+    )
     followup[-1] = {
         "role":    "user",
-        "content": (
-            f"{text}\n{hint}\n"
-            "Réponds en français de façon naturelle et concise."
-        ),
+        "content": f"{text}\n\n{error_hint}",
     }
-    return await _call_llm(followup, thinking=False)
+    async for chunk in _stream_ollama(followup, thinking=False):
+        yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -846,6 +963,70 @@ async def process_message(
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", infra)
         yield infra
+        return
+
+    # Routing déterministe : liste VM/CT Proxmox — bypass LLM dispatcher (trop instable)
+    if _PROXMOX_VM_LIST_RE.search(user_text):
+        from core.plugin_registry import plugin_registry as _pr_vmlist
+        # Extraire instance_id depuis le texte ("de ot-mutu", "sur ot-mutu", etc.)
+        _m_inst = re.search(
+            r"\b(?:de|sur|pour|instance|proxmox)\s+([\w\-\.]+)",
+            user_text, re.IGNORECASE
+        )
+        _inst_hint = _m_inst.group(1) if _m_inst else None
+        _vmlist_result = _pr_vmlist.dispatch_action(
+            "vm_list",
+            {"instance_id": _inst_hint, "node": None}
+        )
+        if _vmlist_result and _vmlist_result.get("success") and _vmlist_result.get("message"):
+            _vmlist_msg = _vmlist_result["message"]
+            memory_store.save(session_id, "user", user_text)
+            memory_store.save(session_id, "assistant", _vmlist_msg)
+            yield _vmlist_msg
+            return
+
+    # Routing déterministe : backup Proxmox → carte de confirmation directe
+    _m_backup = _PROXMOX_BACKUP_RE.search(user_text)
+    if _m_backup:
+        _bk_vmid = int(_m_backup.group(2))
+        # Extraire storage depuis "sur <storage>" / "storage <storage>"
+        _m_storage = re.search(r"\b(?:sur|storage|stockage)\s+([\w\-]+)", user_text, re.IGNORECASE)
+        _bk_storage = _m_storage.group(1) if _m_storage else "local"
+        _bk_params  = {"vmid": _bk_vmid, "storage": _bk_storage, "compress": "zstd"}
+        _bk_card = json.dumps({
+            "__type":  "confirm_required",
+            "func":    "vm_backup",
+            "message": f"Lancer la sauvegarde de VM/CT **{_bk_vmid}** → storage `{_bk_storage}` (zstd) ?",
+            "params":  json.dumps(_bk_params),
+            "cmd":     f"vzdump {_bk_vmid} --compress zstd --storage {_bk_storage}",
+        })
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", f"[backup {_bk_vmid} en attente de confirmation]")
+        yield _bk_card
+        return
+
+    # Routing déterministe : power VM (stop/start/reboot) → carte de confirmation directe
+    _m_power = _PROXMOX_POWER_RE.search(user_text)
+    if _m_power:
+        _pw_verb  = _m_power.group(1).lower()
+        _pw_vmid  = int(_m_power.group(2))
+        _pw_action = (
+            "start"  if any(k in _pw_verb for k in ("start", "démarre", "demarre")) else
+            "stop"   if any(k in _pw_verb for k in ("stop", "arrête", "arrete", "étein", "etein")) else
+            "reboot"
+        )
+        _pw_label = {"start": "Démarrer", "stop": "Arrêter", "reboot": "Redémarrer"}[_pw_action]
+        _pw_params = {"vmid": _pw_vmid, "action": _pw_action}
+        _pw_card = json.dumps({
+            "__type":  "confirm_required",
+            "func":    "vm_power",
+            "message": f"{_pw_label} la VM/CT **{_pw_vmid}** ?",
+            "params":  json.dumps(_pw_params),
+            "cmd":     f"qm {_pw_action} {_pw_vmid}",
+        })
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", f"[power {_pw_action} {_pw_vmid} en attente de confirmation]")
+        yield _pw_card
         return
 
     # Analyse caméra : "analyse dep-parking", "caméra parking combien de voitures ?"
@@ -1006,7 +1187,7 @@ async def process_message(
     except Exception:
         route = "function_gemma"
 
-    # function_gemma: tool-calling complet puis réponse naturelle
+    # function_gemma: tool-calling complet puis réponse naturelle (streaming)
     if route == "function_gemma":
         try:
             from web.radar.events import emit_event as _emit_ev
@@ -1015,7 +1196,14 @@ async def process_message(
         except Exception:
             pass
         _llm_start = _time.perf_counter()
-        response = await _call_with_tools(user_text, messages, plugin_context_id=_effective_ctx)
+        full_response = ""
+        async for chunk in _stream_with_tools(user_text, messages, plugin_context_id=_effective_ctx):
+            # Les tokens de réflexion et les cartes de confirmation passent tels quels
+            if chunk.startswith("\x00think\x00") or chunk.startswith('{"__type"'):
+                yield chunk
+            else:
+                full_response += chunk
+                yield chunk
         try:
             from web.radar.events import emit_event as _emit_ev
             _emit_ev(type="llm.call.completed", level="info", module="web.pipeline",
@@ -1024,24 +1212,7 @@ async def process_message(
         except Exception:
             pass
         memory_store.save(session_id, "user", user_text)
-        memory_store.save(session_id, "assistant", response)
-        if response and response.startswith("__confirm__"):
-            _, payload = response.split("__confirm__", 1)
-            parts           = payload.split("|", 3)
-            confirm_func    = parts[0] if len(parts) > 0 else ""
-            confirm_message = parts[1] if len(parts) > 1 else "Confirmer ?"
-            confirm_params  = parts[2] if len(parts) > 2 else "{}"
-            confirm_cmd     = parts[3] if len(parts) > 3 else ""
-            yield json.dumps({
-                "__type":  "confirm_required",
-                "func":    confirm_func,
-                "message": confirm_message,
-                "params":  confirm_params,
-                "cmd":     confirm_cmd,
-            })
-            return
-        if response:
-            yield response
+        memory_store.save(session_id, "assistant", full_response)
         return
 
     # qwen_thinking ou chat standard (vision/youtube/cad/print inclus en fallback texte)

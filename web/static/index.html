@@ -1363,14 +1363,27 @@ async function sendMsg(){
 
     const msgEl=document.createElement('div');
     msgEl.className='msg msg-ada';
-    msgEl.innerHTML='<div class="from"></div><span class="_body"></span>';
+    msgEl.innerHTML='<div class="from"></div><div class="_think" style="font-size:.72rem;color:var(--text-dim,#64748b);margin-bottom:4px;line-height:1.6"></div><span class="_body"></span>';
     _chatMsgs.appendChild(msgEl);
     _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
     const bodyEl=msgEl.querySelector('._body');
+    const thinkEl=msgEl.querySelector('._think');
 
     const reader=r.body.getReader();
     const decoder=new TextDecoder();
     let buf='',fullText='';
+
+    // Rendu markdown simplifié
+    function _md(t){
+      return t
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+        .replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
+        .replace(/`([^`\n]+)`/g,'<code style="background:rgba(255,255,255,.1);padding:1px 4px;border-radius:3px">$1</code>')
+        .replace(/^#{1,3} (.+)$/gm,'<strong style="font-size:1.05em;display:block;margin:8px 0 3px">$1</strong>')
+        .replace(/^[-•] (.+)$/gm,'• $1')
+        .replace(/\n/g,'<br>');
+    }
 
     while(true){
       const{done,value}=await reader.read();
@@ -1392,7 +1405,18 @@ async function sendMsg(){
             _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
             continue;
           }
-          if(j.text){fullText+=j.text;bodyEl.innerHTML=fullText.replace(/\n/g,'<br>');_chatMsgs.scrollTop=_chatMsgs.scrollHeight;}
+          if(j.thinking){
+            thinkEl.innerHTML+='<span style="opacity:.7">'+j.thinking+'</span><br>';
+            _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+            continue;
+          }
+          if(j.text){
+            // Masquer les étapes de réflexion une fois la réponse réelle arrivée
+            if(thinkEl.children.length>0) thinkEl.style.display='none';
+            fullText+=j.text;
+            bodyEl.innerHTML=_md(fullText);
+            _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
+          }
         }catch{}
       }
     }
@@ -1914,21 +1938,24 @@ function _appendConfirmCard(msgEl,func,message,params,cmd){
   const bodyEl=msgEl.querySelector('._body');
   const card=document.createElement('div');
   card.className='confirm-card';
-  const ps=JSON.stringify(JSON.stringify(params));
   card.innerHTML=`<div class="cc-lbl">⚠ CONFIRMATION REQUISE</div>
     <div class="cc-msg">${message}</div>
     ${cmd?`<code class="cc-cmd">${cmd}</code>`:''}
     <div class="cc-btns">
-      <button class="cc-btn confirm" onclick="executeConfirmed(this,'${func}',${ps})">✓ Confirmer</button>
+      <button class="cc-btn confirm" onclick="executeConfirmed(this)">✓ Confirmer</button>
       <button class="cc-btn cancel" onclick="cancelConfirm(this)">✕ Annuler</button>
     </div>`;
+  const confirmBtn=card.querySelector('.cc-btn.confirm');
+  confirmBtn.dataset.func=func;
+  confirmBtn.dataset.params=JSON.stringify(params);
   (bodyEl||msgEl).appendChild(card);
   _chatMsgs.scrollTop=_chatMsgs.scrollHeight;
 }
 
-async function executeConfirmed(btn,func,paramsJson){
+async function executeConfirmed(btn){
   const card=btn.closest('.confirm-card');
-  const params=JSON.parse(paramsJson);
+  const func=btn.dataset.func;
+  const params=JSON.parse(btn.dataset.params||'{}');
   card.querySelectorAll('.cc-btn').forEach(b=>b.disabled=true);
   card.querySelector('.cc-lbl').textContent='⏳ Exécution en cours…';
   try{

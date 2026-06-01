@@ -146,7 +146,7 @@ RÈGLES :
                 "type": "function",
                 "function": {
                     "name":        "vm_list",
-                    "description": "Liste les VMs Proxmox. Peut filtrer par instance et/ou node.",
+                    "description": "Liste les VMs QEMU et containers LXC (CT) d'une instance Proxmox. Utiliser pour toute demande de liste/affichage de VM, CT, machines virtuelles, conteneurs. Peut filtrer par instance et/ou node.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -495,10 +495,18 @@ RÈGLES :
             try:
                 client = ProxmoxClient(inst)
                 vms = await client.list_vms(node=node)
-                lines.append(f"\n**{inst['label']}** ({len(vms)} VMs) :")
-                for vm in vms[:30]:
-                    status = "▶" if vm.get("status") == "running" else "■"
-                    lines.append(f"  {status} VM {vm['vmid']} — {vm.get('name','?')} [{vm.get('status','?')}] node:{vm.get('node','?')}")
+                n_qemu = sum(1 for v in vms if v.get("type") != "lxc")
+                n_lxc  = sum(1 for v in vms if v.get("type") == "lxc")
+                if not vms:
+                    lines.append(f"\n**{inst['label']}** — ⚠️ Aucune VM/CT visible.")
+                    lines.append("  → Le token API n'a pas les droits VM.Audit.")
+                    lines.append("  → Sur le serveur Proxmox : `pveum acl modify / --tokens root@pam!ada --roles PVEAdmin`")
+                else:
+                    lines.append(f"\n**{inst['label']}** — {n_qemu} VM(s) · {n_lxc} CT(s) :")
+                    for vm in sorted(vms, key=lambda v: int(v.get('vmid', 0)))[:50]:
+                        status = "▶" if vm.get("status") == "running" else "■"
+                        kind   = "CT" if vm.get("type") == "lxc" else "VM"
+                        lines.append(f"  {status} {kind} {vm['vmid']} — {vm.get('name','?')} [{vm.get('status','?')}] node:{vm.get('node','?')}")
             except Exception as e:
                 lines.append(f"\n**{inst['label']}** : ❌ {e}")
         return {"success": True, "message": "\n".join(lines)}
@@ -642,14 +650,33 @@ RÈGLES :
             return {"success": True, "message": "Aucun backup trouvé."}
         return {"success": True, "message": "Backups disponibles :" + "\n".join(lines)}
 
+    async def _find_vm_node(self, client, vmid: int) -> tuple[str, str]:
+        """Résout le node et le type (qemu/lxc) d'une VM/CT depuis son vmid."""
+        try:
+            vms = await client.list_vms()
+            for vm in vms:
+                if int(vm.get("vmid", -1)) == vmid:
+                    return vm.get("node", ""), vm.get("type", "qemu")
+        except Exception:
+            pass
+        return "", "qemu"
+
     async def _async_vm_power(self, params: dict) -> dict:
         from core.infra.proxmox_client import ProxmoxClient
         inst = self._get_single_instance(params.get("instance_id"))
         if not inst:
             return {"success": False, "message": "Instance introuvable."}
         client = ProxmoxClient(inst)
-        await client.vm_power(params["node"], int(params["vmid"]), params["action"])
-        return {"success": True, "message": f"Action '{params['action']}' lancée sur VM {params['vmid']}."}
+        vmid = int(params["vmid"])
+        node = params.get("node") or ""
+        vm_type = params.get("vm_type") or ""
+        if not node:
+            node, vm_type = await self._find_vm_node(client, vmid)
+            if not node:
+                return {"success": False, "message": f"VM/CT {vmid} introuvable sur cette instance."}
+        await client.vm_power(node, vmid, params["action"], vm_type=vm_type or "qemu")
+        kind = "CT" if vm_type == "lxc" else "VM"
+        return {"success": True, "message": f"Action '{params['action']}' lancée sur {kind} {vmid} (node: {node})."}
 
     async def _async_vm_backup(self, params: dict) -> dict:
         from core.infra.proxmox_client import ProxmoxClient
@@ -657,9 +684,15 @@ RÈGLES :
         if not inst:
             return {"success": False, "message": "Instance introuvable."}
         client  = ProxmoxClient(inst)
+        vmid = int(params["vmid"])
+        node = params.get("node") or ""
+        if not node:
+            node, _ = await self._find_vm_node(client, vmid)
+            if not node:
+                return {"success": False, "message": f"VM/CT {vmid} introuvable sur cette instance."}
         storage = params.get("storage", "local")
-        await client.vm_backup(params.get("node",""), int(params["vmid"]), storage=storage)
-        return {"success": True, "message": f"Backup lancé pour la VM {params['vmid']}."}
+        await client.vm_backup(node, vmid, storage=storage)
+        return {"success": True, "message": f"Backup lancé pour la VM/CT {vmid} → storage '{storage}'."}
 
     async def _async_vm_snapshot(self, params: dict) -> dict:
         from core.infra.proxmox_client import ProxmoxClient
@@ -688,13 +721,41 @@ RÈGLES :
         if not instance_id:
             enabled = [i for i in PROXMOX_INSTANCES if i["enabled"]]
             return enabled[0] if len(enabled) == 1 else None
-        return next((i for i in PROXMOX_INSTANCES if i["id"] == instance_id), None)
+        # 1. Match exact par id
+        inst = next((i for i in PROXMOX_INSTANCES if i["id"] == instance_id), None)
+        if inst:
+            return inst
+        # 2. Match par label (insensible à la casse)
+        iid_l = instance_id.lower().replace("-", " ").replace("_", " ")
+        for i in PROXMOX_INSTANCES:
+            label_l = i.get("label", "").lower().replace("-", " ").replace("_", " ")
+            id_l    = i["id"].lower()
+            if label_l == iid_l or id_l == instance_id.lower():
+                return i
+        # 3. Match partiel — label ou id contient le terme (ou inversement)
+        for i in PROXMOX_INSTANCES:
+            label_l = i.get("label", "").lower().replace("-", " ").replace("_", " ")
+            id_l    = i["id"].lower()
+            if iid_l in label_l or label_l in iid_l or iid_l in id_l:
+                return i
+        # 4. Repli : si une seule instance activée, l'utiliser
+        enabled = [i for i in PROXMOX_INSTANCES if i["enabled"]]
+        return enabled[0] if len(enabled) == 1 else None
 
     def _get_single_pbs(self, pbs_id: str | None) -> dict | None:
         if not pbs_id:
             enabled = [p for p in PBS_INSTANCES if p["enabled"]]
             return enabled[0] if len(enabled) == 1 else None
-        return next((p for p in PBS_INSTANCES if p["id"] == pbs_id), None)
+        inst = next((p for p in PBS_INSTANCES if p["id"] == pbs_id), None)
+        if inst:
+            return inst
+        pbs_l = pbs_id.lower().replace("-", " ").replace("_", " ")
+        for p in PBS_INSTANCES:
+            label_l = p.get("label", "").lower().replace("-", " ").replace("_", " ")
+            if pbs_l in label_l or label_l in pbs_l or pbs_l in p["id"].lower():
+                return p
+        enabled = [p for p in PBS_INSTANCES if p["enabled"]]
+        return enabled[0] if len(enabled) == 1 else None
 
     # ── KPIs dashboard ────────────────────────────────────────────────────────
 
