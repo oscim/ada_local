@@ -271,6 +271,7 @@ MODULES_ENABLED: dict = {
     "rmm":        True,    # → RmmPlugin (univers: opent)
     "telephony":  False,   # → TelephonyPlugin (off par défaut)
     "margepro":   True,    # → MargeProPlugin (univers: margep)
+    "music":      False,   # → module Musique (off par défaut)
 }
 
 # --- Console Colors ---

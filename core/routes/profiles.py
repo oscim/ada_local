@@ -195,7 +195,8 @@ def get_universe(universe_id: str) -> dict | None:
         "SELECT module_id FROM universe_modules WHERE universe_id = ? ORDER BY position",
         (universe_id,),
     ).fetchall()
-    result = {**dict(row), "modules": [r["module_id"] for r in modules]}
+    avail_ids = {m.id for m in available_modules(MODULES_ENABLED)}
+    result = {**dict(row), "modules": [r["module_id"] for r in modules if r["module_id"] in avail_ids]}
     conn.close()
     return result
 

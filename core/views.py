@@ -24,7 +24,7 @@ ALL_MODULES: list[ModuleDef] = [
     ModuleDef("home",           "Domotique",         "Home_white",        "maison"),
     ModuleDef("cameras",        "Caméras",           "Camera_white",      "maison"),
     ModuleDef("senses",         "Capteurs",          "IOT_white",         "maison"),
-    ModuleDef("music",          "Musique",           "Music_white",       "maison"),
+    ModuleDef("music",          "Musique",           "Music_white",       "maison",  "music"),
     ModuleDef("infrastructure", "Infrastructure",    "Tiles_white",       "societe"),
     ModuleDef("societe",        "Sociétés",          "Globe_white",       "societe",   "societe"),
     ModuleDef("marketing",      "Marketing",         "PencilInk_white",   "societe"),

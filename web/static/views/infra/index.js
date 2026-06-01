@@ -521,11 +521,16 @@ export async function mount(container, opts = {}) {
 
   // Charger les données en parallèle
   let instances = [], pbsList = [], profiles = [], companies = [];
+  let svcList = [], svcEndpoints = [], infraPage = {}, dockerUniMap = {};
   try {
-    [instances, pbsList, profiles] = await Promise.all([
+    [instances, pbsList, profiles, svcList, svcEndpoints, infraPage, dockerUniMap] = await Promise.all([
       _api('GET', '/api/proxmox/instances').catch(() => []),
       _api('GET', '/api/pbs/instances').catch(() => []),
       _api('GET', '/api/proxmox/profiles').catch(() => []),
+      _api('GET', '/api/infra/services').catch(() => []),
+      _api('GET', '/api/infra/endpoints').catch(() => []),
+      _api('GET', '/api/page/infrastructure').catch(() => ({})),
+      _api('GET', '/api/infra/docker/universes').catch(() => ({})),
     ]);
     // Sociétés pour les selects (optionnel)
     try { companies = await _api('GET', '/api/societe/companies'); } catch {}
@@ -541,23 +546,161 @@ export async function mount(container, opts = {}) {
   pbsList.forEach(p => { _instCache.pbs[p.id] = p; });
   profiles.forEach(p => { _profileCache[p.id] = p; });
 
+  // ── Filtre univers : détection automatique depuis le panel actif ──────
+  const _panelUni = opts.universe || container.closest('.uni-panel')?.id?.replace('uni-', '') || null;
+  // Mapping panel-slug → universe IDs stockés sur les instances
+  const _PANEL_TO_UNI = { home: ['home'], co: ['opent','uscss','margep'], plan: [], tools: [] };
+  const _autoUnis = _panelUni ? (_PANEL_TO_UNI[_panelUni] || null) : null;
+  let _uniFilter = _autoUnis; // null = tout afficher
+
+  function _filterItems(list) {
+    if (!_uniFilter || !_uniFilter.length) return list;
+    return list.filter(i => !i.universe || _uniFilter.includes(i.universe));
+  }
+
+  function _renderLists() {
+    const fInst = _filterItems(instances);
+    const fPbs  = _filterItems(pbsList);
+    const fProf = _filterItems(profiles);
+
+    const pveEl = container.querySelector('#pve-list');
+    const pbsEl = container.querySelector('#pbs-list');
+    const proEl = container.querySelector('#profile-list');
+    if (pveEl) pveEl.innerHTML = fInst.length ? fInst.map(i => _instCard(i,'pve',null)).join('') : `<div class="infra-empty">Aucune instance Proxmox</div>`;
+    if (pbsEl) pbsEl.innerHTML = fPbs.length  ? fPbs.map(p => _instCard(p,'pbs',null)).join('') : `<div class="infra-empty">Aucun serveur PBS</div>`;
+    if (proEl) proEl.innerHTML = fProf.length ? fProf.map(p => _profileCard(p)).join('')        : `<div class="infra-empty">Aucun profil de backup</div>`;
+
+    // Filtrer les lignes services locaux et docker par universe
+    ['#svc-status-list', '#docker-list'].forEach(sel => {
+      const el = container.querySelector(sel);
+      if (!el) return;
+      el.querySelectorAll('[data-universe]').forEach(row => {
+        const rowUni = row.dataset.universe || '';
+        const show = !_uniFilter || !_uniFilter.length || !rowUni || _uniFilter.includes(rowUni);
+        row.style.display = show ? 'flex' : 'none';
+      });
+    });
+
+    // Mettre à jour le chip filtre
+    const chip = container.querySelector('#infra-uni-chip');
+    if (chip) {
+      if (_uniFilter) {
+        const labels = _uniFilter.map(u => _UNI[u]?.label || u).join(', ');
+        chip.innerHTML = `Univers\u00a0: <b>${labels}</b> <span style="cursor:pointer;margin-left:4px" title="Tout afficher" id="infra-uni-clear">\u00d7</span>`;
+        chip.style.display = 'inline-flex';
+        container.querySelector('#infra-uni-clear')?.addEventListener('click', () => {
+          _uniFilter = null;
+          _renderLists();
+        });
+      } else {
+        chip.innerHTML = `<span style="cursor:pointer" id="infra-uni-reset">Filtrer : ${_autoUnis ? (_PANEL_TO_UNI[_panelUni]||[]).map(u=>_UNI[u]?.label||u).join(', ') : '—'}</span>`;
+        if (_autoUnis) container.querySelector('#infra-uni-reset')?.addEventListener('click', () => { _uniFilter = _autoUnis; _renderLists(); });
+      }
+    }
+  }
+
+  const _initPve  = _filterItems(instances);
+  const _initPbs  = _filterItems(pbsList);
+  const _initProf = _filterItems(profiles);
+
   // HTML instances PVE
-  const pveCards = instances.length
-    ? instances.map(i => _instCard(i, 'pve', null)).join('')
+  const pveCards = _initPve.length
+    ? _initPve.map(i => _instCard(i, 'pve', null)).join('')
     : `<div class="infra-empty">Aucune instance Proxmox configurée</div>`;
 
   // HTML PBS
-  const pbsCards = pbsList.length
-    ? pbsList.map(p => _instCard(p, 'pbs', null)).join('')
+  const pbsCards = _initPbs.length
+    ? _initPbs.map(p => _instCard(p, 'pbs', null)).join('')
     : `<div class="infra-empty">Aucun serveur PBS configuré</div>`;
 
   // HTML profils
-  const profileCards = profiles.length
-    ? profiles.map(p => _profileCard(p)).join('')
+  const profileCards = _initProf.length
+    ? _initProf.map(p => _profileCard(p)).join('')
     : `<div class="infra-empty">Aucun profil de backup défini</div>`;
+
+  // ── Services locaux & Docker ──────────────────────────────────────────────
+  function _statusDot(s) {
+    const c = s === 'online' ? '#4caf50' : s === 'offline' ? '#ef5350' : '#f59e0b';
+    return `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${c};flex-shrink:0"></span>`;
+  }
+
+  function _uniSelect(current, typeKey, itemName) {
+    const cur = current || '';
+    const curColor = (cur && _UNI[cur]) ? _UNI[cur].color : '#64748b';
+    const opts = '<option value="">— Univers —</option>' +
+      Object.entries(_UNI).map(([id, u]) =>
+        '<option value="' + id + '"' + (cur === id ? ' selected' : '') + '>' + u.label + '</option>'
+      ).join('');
+    return '<select class="infra-uni-sel" data-type="' + typeKey + '" data-item="' + itemName + '"' +
+      ' onchange="window._infraSetUni(this)"' +
+      ' style="background:#1e293b;color:' + curColor + ';border:1px solid rgba(255,255,255,.12);' +
+      'border-radius:4px;padding:2px 6px;font-size:.72rem;cursor:pointer;min-width:90px">' +
+      opts + '</select>';
+  }
+
+  const allSvcs = [
+    ...svcList.map(s => ({...s, builtin: true})),
+    ...svcEndpoints.map(e => ({...e, builtin: false, status: e.status || 'unknown'})),
+  ].filter(s => !s.hidden);
+
+  const svcRows = allSvcs.map(s => {
+    const name = s.name === 'home_assistant' ? 'Home Assistant' : s.name;
+    const urlPart = s.url
+      ? '<a href="' + s.url + '" target="_blank" style="font-size:10px;color:#67e8f9;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.url + '">' + s.url + '</a>'
+      : '<span style="font-size:10px;color:#475569;flex:1">' + (s.status||'') + '</span>';
+    const typeKey = s.builtin ? 'services' : 'endpoints';
+    return '<div data-universe="' + (s.universe||'') + '" style="display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+      _statusDot(s.status||'unknown') +
+      '<span style="font-size:.82rem;font-weight:600;color:#e2e8f0;min-width:110px">' + name + '</span>' +
+      urlPart +
+      _uniSelect(s.universe, typeKey, s.name) +
+      '</div>';
+  }).join('') || '<div class="infra-empty">Aucun service configuré</div>';
+
+  const dockerContainers = (infraPage.docker && infraPage.docker.containers ? infraPage.docker.containers : []);
+  const dockerRows = dockerContainers.map(c => {
+    const running = (c.status||'').toLowerCase().indexOf('up') === 0 || c.status === 'running';
+    const dot = running ? '#4caf50' : '#ef5350';
+    return '<div data-universe="' + (dockerUniMap[c.name]||'') + '" style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+      '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + dot + ';flex-shrink:0"></span>' +
+      '<span style="font-size:.82rem;color:#e2e8f0;flex:1">' + c.name + '</span>' +
+      '<span style="font-size:10px;color:#64748b;margin-right:4px">' + (c.status||'') + '</span>' +
+      _uniSelect(dockerUniMap[c.name], 'docker', c.name) +
+      '</div>';
+  }).join('') || '<div class="infra-empty">Aucun container Docker détecté</div>';
+
+  const warnings = infraPage.warnings || [];
+  const warnRows = warnings.length
+    ? warnings.map(w => `<div style="font-size:.8rem;color:#fcd34d;padding:3px 0">⚠ ${w}</div>`).join('')
+    : '';
 
   container.innerHTML = `
   <div class="infra-view">
+
+    ${_autoUnis ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
+      <span id="infra-uni-chip" style="display:inline-flex;align-items:center;gap:4px;font-size:.75rem;padding:3px 10px;border-radius:20px;background:rgba(0,212,255,.08);border:1px solid rgba(0,212,255,.2);color:#67e8f9"></span>
+    </div>` : ''}
+
+    <div class="infra-sec">
+      <div class="infra-sec-hd">
+        <span class="infra-sec-title">🔗 Services locaux</span>
+        <a href="#" style="font-size:.72rem;color:#67e8f9" onclick="event.preventDefault();window._infraMount && window._infraMount()">↻</a>
+      </div>
+      ${warnRows}
+      <div id="svc-status-list">${svcRows}</div>
+    </div>
+
+    <hr class="infra-divider">
+
+    <div class="infra-sec">
+      <div class="infra-sec-hd">
+        <span class="infra-sec-title">🐳 Docker</span>
+        <span style="font-size:.72rem;color:#64748b">${dockerContainers.length} container${dockerContainers.length > 1 ? 's' : ''}</span>
+      </div>
+      <div id="docker-list">${dockerRows}</div>
+    </div>
+
+    <hr class="infra-divider">
 
     <div class="infra-sec">
       <div class="infra-sec-hd">
@@ -592,6 +735,33 @@ export async function mount(container, opts = {}) {
     </div>
 
   </div>`;
+
+  // Initialiser le chip de filtre univers
+  if (_autoUnis) _renderLists();
+
+  // Handler universe select pour services / endpoints / docker
+  window._infraSetUni = async function(sel) {
+    const typeKey = sel.dataset.type;
+    const name    = sel.dataset.item;
+    const value   = sel.value;
+    sel.disabled  = true;
+    try {
+      const url = typeKey === 'docker'
+        ? '/api/infra/docker/' + encodeURIComponent(name) + '/universe'
+        : '/api/infra/' + typeKey + '/' + encodeURIComponent(name) + '/universe';
+      await fetch(url, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({universe: value})
+      });
+      sel.style.color = (value && _UNI[value]) ? _UNI[value].color : '#64748b';
+      // Mettre à jour data-universe sur la ligne parente pour que le filtre fonctionne
+      const row = sel.closest('[data-universe]');
+      if (row) row.dataset.universe = value;
+      if (typeKey === 'docker') dockerUniMap[name] = value;
+    } catch(e) { console.error('_infraSetUni', e); }
+    sel.disabled = false;
+  };
 }
 
 window._infraShowNewForm = (type) => {

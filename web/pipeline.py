@@ -381,6 +381,7 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
             )
             page = await ctx.new_page()
             history: list[dict] = []
+            _visited_urls: list[str] = []  # URLs non-Google visitées par l'agent
 
             for step in range(1, MAX_STEPS + 1):
                 try:
@@ -442,14 +443,28 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
 
                 if action_name in ("done", "extract"):
                     result = action.get("result", reply)
+                    # Ajouter les sources si l'agent ne les a pas citées
+                    if _visited_urls:
+                        _src_lower = result.lower()
+                        if "source" not in _src_lower and "http" not in _src_lower:
+                            _urls_str = "\n".join(f"- {u}" for u in _visited_urls[:5])
+                            result += f"\n\n📎 **Sources :**\n{_urls_str}"
                     await browser.close()
                     yield result
                     return
 
                 try:
                     if action_name == "navigate":
+                        _nav_url = action.get("url", "")
+                        # Mémoriser les pages de contenu (pas les SERP Google)
+                        if (_nav_url
+                                and "google.com/search" not in _nav_url
+                                and "google.fr/search" not in _nav_url
+                                and "bing.com/search" not in _nav_url
+                                and _nav_url not in _visited_urls):
+                            _visited_urls.append(_nav_url)
                         await page.goto(
-                            action.get("url", ""),
+                            _nav_url,
                             wait_until="domcontentloaded",
                             timeout=15_000,
                         )
@@ -490,7 +505,11 @@ def _system_prompt(plugin_context_id: str | None = None) -> str:
         "Réponds TOUJOURS en français. "
         "RÈGLE ABSOLUE : réponses courtes, 1 à 3 phrases max. "
         "Pas d'intro, pas de conclusion, pas de présentation de toi-même. "
-        "Va directement à la réponse."
+        "Va directement à la réponse. "
+        "RÈGLE SOURCES OBLIGATOIRE : si des documents de référence ou des résultats "
+        "de recherche web sont fournis dans le contexte, tu DOIS citer les sources "
+        "à la fin de ta réponse sous la forme \"📎 Sources : nom_fichier_ou_url\". "
+        "Ne jamais omettre les sources quand elles sont disponibles."
     )
     try:
         from core.plugin_registry import plugin_registry as _pr

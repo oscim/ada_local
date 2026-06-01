@@ -61,6 +61,7 @@ from core.routes.profiles import initialize as _profiles_init
 _PUBLIC_PREFIXES = (
     "/api/auth/",
     "/static/",
+    "/api/webhook/",   # webhooks entrants — auth propre par token secret
 )
 _PUBLIC_EXACT = {
     "/",
@@ -111,6 +112,10 @@ if _MODULES_ENABLED.get("societe", False):
 # router_plugins : toujours actif — retourne liste vide si aucun plugin enregistré
 from web.router_plugins import router as _plugins_router
 app.include_router(_plugins_router)
+
+# Webhooks entrants — Domoticz, n8n, Home Assistant, etc.
+from web.router_webhook import router as _webhook_router
+app.include_router(_webhook_router)
 
 # routes_infra : Proxmox/PBS multi-instance — toujours monté, guard interne
 from web.routes_infra import router as _infra_router
@@ -1010,9 +1015,13 @@ class _ServiceTagsBody(BaseModel):
     tags: list[str]
 
 
+class _UniverseBody(BaseModel):
+    universe: str = ''
+
+
 @app.get("/api/infra/services")
 async def list_infra_services():
-    """Retourne les services built-in avec statut, tags et flag hidden."""
+    """Retourne les services built-in avec statut, tags, hidden et universe."""
     from core.runtime_state import runtime_state, _BUILTIN_SERVICES, _load_service_overrides
     state = runtime_state.get_infra_summary()
     svcs = state.get("services", {})
@@ -1027,6 +1036,7 @@ async def list_infra_services():
             "details": svc.get("details", ""),
             "tags": ov.get("tags", ["local"]),
             "hidden": ov.get("hidden", False),
+            "universe": ov.get("universe", ""),
             "builtin": True,
         })
     return result
@@ -1043,6 +1053,34 @@ async def update_service_hidden_api(name: str, body: _ServiceHiddenBody):
 async def update_service_tags_api(name: str, body: _ServiceTagsBody):
     from core.runtime_state import update_service_tags
     update_service_tags(name, body.tags)
+    return {"ok": True}
+
+
+@app.patch("/api/infra/services/{name}/universe")
+async def update_service_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_service_universe
+    update_service_universe(name, body.universe)
+    return {"ok": True}
+
+
+@app.patch("/api/infra/endpoints/{name}/universe")
+async def update_endpoint_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_endpoint_universe
+    ok = update_endpoint_universe(name, body.universe)
+    return {"ok": ok}
+
+
+@app.get("/api/infra/docker/universes")
+async def get_docker_universes():
+    """Retourne la map container_name → universe."""
+    from core.runtime_state import _load_docker_universe
+    return _load_docker_universe()
+
+
+@app.patch("/api/infra/docker/{name}/universe")
+async def update_docker_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_docker_universe
+    update_docker_universe(name, body.universe)
     return {"ok": True}
 
 

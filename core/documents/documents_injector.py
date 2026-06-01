@@ -67,12 +67,14 @@ def inject_documentation(
 
     sep = "\n\n---\n\n"
     doc_context = (
-        "## Documentation de référence\n\n"
+        "## Documentation de référence\n"
+        "⚠ INSTRUCTION OBLIGATOIRE : tu DOIS citer les sources utilisées "
+        "à la fin de ta réponse sous la forme \"📎 Sources : <nom_fichier>\".\n\n"
         + sep.join(blocks)
     )
     if include_sources:
         doc_context += (
-            f"\n\n*Sources consultées : {', '.join(sources)}*"
+            f"\n\n📎 Sources disponibles (à citer obligatoirement dans ta réponse) : {', '.join(sources)}"
         )
 
     # Injecter dans le system prompt (messages[0])
