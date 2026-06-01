@@ -479,6 +479,19 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 }
 .sw.on{background:rgba(34,212,144,.15);border-color:var(--green);}
 .sw.on::after{background:var(--green);left:14px;box-shadow:0 0 5px var(--green);}
+/* ── Domotique dense : appareils 4-col + capteurs ── */
+.toggle-grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;}
+.dev-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 8px;cursor:pointer;transition:border-color .13s;}
+.dev-card:hover{border-color:var(--border-hi);}
+.dev-n{font-size:11px;font-weight:500;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dev-s{font-size:9px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sensor-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 8px;cursor:pointer;transition:border-color .13s;}
+.sensor-card:hover{border-color:var(--border-hi);}
+.sensor-icon{font-size:14px;}
+.sensor-val{font-size:16px;font-weight:700;line-height:1.2;margin-top:2px;}
+.sensor-lbl{font-size:9px;color:var(--text-dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.domo-search{width:100%;box-sizing:border-box;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:5px 9px;color:var(--text);font-size:11px;outline:none;margin-bottom:5px;display:block;}
+.domo-search:focus{border-color:var(--accent);}
 
 /* ═══════════════════════════════════════════
    NODES (infra)
@@ -911,14 +924,139 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
         <button class="scene-btn" onclick="inject('Mode Relax')">🌊 Relax</button>
         <button class="scene-btn" onclick="inject('Mode Nuit')">🌙 Nuit</button>
       </div>
-      <div class="sec">Appareils</div>
-      <div class="toggle-grid">
-        <div class="toggle-item"><div><div class="ti-n">🚗 Parking EXT</div><div class="ti-s">Zone extérieure</div></div><div class="sw" onclick="this.classList.toggle('on')"></div></div>
-        <div class="toggle-item"><div><div class="ti-n">🚪 Portail</div><div class="ti-s">Accès principal</div></div><div class="sw" onclick="this.classList.toggle('on')"></div></div>
-        <div class="toggle-item"><div><div class="ti-n">💡 Salon</div><div class="ti-s">3 ampoules</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-        <div class="toggle-item"><div><div class="ti-n">💡 Bureau</div><div class="ti-s">2 ampoules</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-        <div class="toggle-item"><div><div class="ti-n">🌡 Thermostat</div><div class="ti-s">20°C · cible 21°C</div></div><div class="sw on" onclick="this.classList.toggle('on')"></div></div>
-        <div class="toggle-item"><div><div class="ti-n">🔐 Alarme</div><div class="ti-s">Désactivée</div></div><div class="sw" onclick="this.classList.toggle('on')"></div></div>
+      <!-- ── Appareils (4 cols, filtrés actifs, recherche) ── -->
+      <div class="sec" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Appareils <span id="dev-count" style="font-size:10px;font-weight:400;color:var(--text-dim)">3 actifs · 6 total</span></span>
+        <button id="dev-show-all" class="scene-btn" style="padding:2px 8px;font-size:10px;margin:0" onclick="_devToggleAll()">Tout afficher</button>
+      </div>
+      <input id="dev-search" class="domo-search" placeholder="🔍 Rechercher un appareil…" oninput="_devFilter(this.value)">
+      <div class="toggle-grid-4" id="dev-grid">
+        <div class="dev-card" data-name="salon" data-active="1">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>💡</span><div class="sw on" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Salon</div><div class="dev-s">3 ampoules</div>
+        </div>
+        <div class="dev-card" data-name="bureau" data-active="1">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>💡</span><div class="sw on" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Bureau</div><div class="dev-s">2 ampoules</div>
+        </div>
+        <div class="dev-card" data-name="thermostat" data-active="1">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>🌡</span><div class="sw on" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Thermostat</div><div class="dev-s">20° → 21°C</div>
+        </div>
+        <div class="dev-card" data-name="parking ext" data-active="0" hidden>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>🚗</span><div class="sw" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Parking</div><div class="dev-s">Zone ext.</div>
+        </div>
+        <div class="dev-card" data-name="portail" data-active="0" hidden>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>🚪</span><div class="sw" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Portail</div><div class="dev-s">Accès princ.</div>
+        </div>
+        <div class="dev-card" data-name="alarme" data-active="0" hidden>
+          <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>🔐</span><div class="sw" onclick="_devSw(this)"></div></div>
+          <div class="dev-n">Alarme</div><div class="dev-s">Désactivée</div>
+        </div>
+      </div>
+      <!-- ── Capteurs (4 cols) ── -->
+      <div class="sec">Capteurs</div>
+      <div class="toggle-grid-4" id="sensor-grid">
+        <div class="sensor-card" onclick="inject('Température salon')">
+          <div class="sensor-icon">🌡</div>
+          <div class="sensor-val">21.5<span style="font-size:9px;font-weight:400">°C</span></div>
+          <div class="sensor-lbl">Temp · Salon</div>
+        </div>
+        <div class="sensor-card" onclick="inject('Température bureau')">
+          <div class="sensor-icon">🌡</div>
+          <div class="sensor-val">19.8<span style="font-size:9px;font-weight:400">°C</span></div>
+          <div class="sensor-lbl">Temp · Bureau</div>
+        </div>
+        <div class="sensor-card" onclick="inject('Humidité cuisine')">
+          <div class="sensor-icon">💧</div>
+          <div class="sensor-val">58<span style="font-size:9px;font-weight:400">%</span></div>
+          <div class="sensor-lbl">Humidité · Cuisine</div>
+        </div>
+        <div class="sensor-card" onclick="inject('CO2 salon')">
+          <div class="sensor-icon">🌬</div>
+          <div class="sensor-val">412<span style="font-size:9px;font-weight:400"> ppm</span></div>
+          <div class="sensor-lbl">CO₂ · Salon</div>
+        </div>
+        <div class="sensor-card" onclick="inject('Mouvement entrée')">
+          <div class="sensor-icon">🚶</div>
+          <div class="sensor-val" style="font-size:12px;color:var(--text-dim)">Aucun</div>
+          <div class="sensor-lbl">Mouvement · Entrée</div>
+        </div>
+        <div class="sensor-card" onclick="inject('État porte garage')">
+          <div class="sensor-icon">🚗</div>
+          <div class="sensor-val" style="font-size:12px;color:#22c55e">Fermée</div>
+          <div class="sensor-lbl">Porte garage</div>
+        </div>
+        <div class="sensor-card" onclick="inject('Luminosité extérieure')">
+          <div class="sensor-icon">☀️</div>
+          <div class="sensor-val">820<span style="font-size:9px;font-weight:400"> lux</span></div>
+          <div class="sensor-lbl">Luminosité ext.</div>
+        </div>
+        <div class="sensor-card" onclick="inject('Batterie portail')">
+          <div class="sensor-icon">🔋</div>
+          <div class="sensor-val" style="color:#22c55e">87<span style="font-size:9px;font-weight:400">%</span></div>
+          <div class="sensor-lbl">Batterie portail</div>
+        </div>
+      </div>
+      <div class="sec" style="display:flex;align-items:center;justify-content:space-between">
+        <span>Automations</span>
+        <button class="scene-btn" style="padding:2px 9px;font-size:11px;margin:0" onclick="inject('Crée une nouvelle automation domotique')">+ Nouvelle</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px" id="auto-list">
+        <div class="toggle-item" onclick="inject('Détails de l\'automation Réveil lumière')" style="cursor:pointer">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="font-size:15px">🌅</span>
+            <div style="min-width:0">
+              <div class="ti-n">Réveil lumière</div>
+              <div class="ti-s" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Lever du soleil → lumières progressives</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;flex-shrink:0" onclick="event.stopPropagation()">
+            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(34,197,94,0.12);color:#22c55e;font-weight:600">ACTIF</span>
+            <div class="sw on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="toggle-item" onclick="inject('Détails de l\'automation Mode nuit auto')" style="cursor:pointer">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="font-size:15px">🌙</span>
+            <div style="min-width:0">
+              <div class="ti-n">Mode nuit auto</div>
+              <div class="ti-s" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Tous les jours à 23h00 → mode nuit</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;flex-shrink:0" onclick="event.stopPropagation()">
+            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(34,197,94,0.12);color:#22c55e;font-weight:600">ACTIF</span>
+            <div class="sw on" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="toggle-item" onclick="inject('Détails de l\'automation Alerte portail')" style="cursor:pointer">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="font-size:15px">🚪</span>
+            <div style="min-width:0">
+              <div class="ti-n">Alerte portail</div>
+              <div class="ti-s" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Portail ouvert > 10 min → notification</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;flex-shrink:0" onclick="event.stopPropagation()">
+            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(251,146,60,0.12);color:#fb923c;font-weight:600">PAUSE</span>
+            <div class="sw" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
+        <div class="toggle-item" onclick="inject('Détails de l\'automation Thermostat absent')" style="cursor:pointer">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="font-size:15px">🌡</span>
+            <div style="min-width:0">
+              <div class="ti-n">Thermostat absent</div>
+              <div class="ti-s" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Alarme activée → thermostat 17°C</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;flex-shrink:0" onclick="event.stopPropagation()">
+            <span style="font-size:9px;padding:2px 6px;border-radius:4px;background:rgba(100,116,139,0.15);color:var(--text-dim);font-weight:600">INACTIF</span>
+            <div class="sw" onclick="this.classList.toggle('on')"></div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="subview" id="sub-cameras">
@@ -1223,7 +1361,89 @@ async function _onAuthenticated(){
   _renderPluginCtxBar('dash');
 }
 
-// ── Profil (thème + densité depuis /api/profile) ───────────────
+// ── Module → sous-vue (onglets dynamiques par univers) ──────────
+const _MOD_TAB = {
+  'home':           {sub:'sub-domo',         label:'Domotique'},
+  'cameras':        {sub:'sub-cameras',      label:'Caméras'},
+  'senses':         {sub:'sub-senses',       label:'Capteurs',      view:'page',    opts:{page:'senses',hint:'État capteurs'}},
+  'music':          {sub:'sub-music',        label:'Musique',       view:'page',    opts:{page:'music',hint:'Lecteur musique'}},
+  'infrastructure': {sub:'sub-infra',        label:'Infrastructure',view:'infra',   opts:{}},
+  'societe':        {sub:'sub-soc',          label:'Sociétés',      view:'societe', opts:{}},
+  'marketing':      {sub:'sub-mkt',          label:'Marketing',     view:'marketing',opts:{}},
+  'planner':        {sub:'sub-agenda',       label:'Agenda',        view:'planner', opts:{}},
+  'briefing':       {sub:'sub-briefing',     label:'Briefing',      view:'briefing',opts:{}},
+  'skills':         {sub:'sub-skills',       label:'Compétences',   view:'skills',  opts:{}},
+  'memory':         {sub:'sub-mem',          label:'Mémoire',       view:'memory',  opts:{}},
+  'settings':       {sub:'sub-settings',     label:'Paramètres',    view:'settings',opts:{}},
+  'printers':       {sub:'sub-rmm',          label:'RMM',           view:'page',    opts:{page:'printers',hint:'RMM clients actifs'}},
+  'dashboard':      {sub:'sub-dash-overview',label:"Vue d'ensemble", view:'dashboard',opts:{}},
+};
+// Registre des vues dynamiques créées par _applyUniverseTabs
+const _VIEW_OVERRIDES = {};  // subId → [viewName, opts]
+const _VIEW_LABELS    = {};  // subId → label (breadcrumb)
+
+function _applyUniverseTabs(uniId, moduleIds) {
+  const panel = document.getElementById('uni-' + uniId);
+  if (!panel) return;
+  const tabBar = panel.querySelector('.subtab-bar');
+  if (!tabBar) return;
+  // Construire la liste des onglets à partir des modules connus
+  const tabs = [];
+  const seen = new Set();
+  for (const modId of (moduleIds || [])) {
+    const def = _MOD_TAB[modId];
+    if (!def || seen.has(modId)) continue;
+    seen.add(modId);
+    // Si le subview standard est déjà dans CE panel → garder son ID
+    // Sinon → générer un ID unique pour ce panel pour éviter les conflits
+    const inPanel = panel.querySelector('#' + def.sub);
+    const subId = inPanel ? def.sub : (uniId + '-' + modId);
+    tabs.push({...def, modId, sub: subId});
+  }
+  if (!tabs.length) return; // Aucun module reconnu → garder l'état actuel
+  // Masquer tous les subviews existants du panel
+  panel.querySelectorAll('.subview').forEach(sv => sv.classList.remove('on'));
+  // Créer les divs subview manquants et enregistrer dans les registres
+  for (const t of tabs) {
+    if (!panel.querySelector('#' + t.sub)) {
+      const div = document.createElement('div');
+      div.className = 'subview';
+      div.id = t.sub;
+      panel.appendChild(div);
+    }
+    if (t.view) _VIEW_OVERRIDES[t.sub] = [t.view, t.opts || {}];
+    _VIEW_LABELS[t.sub] = t.label;
+  }
+  // Reconstruire le subtab-bar
+  tabBar.innerHTML = tabs.map((t,i) =>
+    `<div class="stab${i===0?' on':''}" onclick="goSub(this,'${t.sub}')">${t.label}</div>`
+  ).join('');
+  // Marquer le 1er subview comme actif (le contenu sera chargé par goUni → goSub)
+  const firstSv = panel.querySelector('#' + tabs[0].sub);
+  if (firstSv) firstSv.classList.add('on');
+}
+
+function _applyUniverseTabsFromProfile(prof) {
+  const universes = prof.universes;
+  if (!Array.isArray(universes) || !universes.length) return;
+  // Indexer par nom (insensible à la casse)
+  const byName = {};
+  for (const u of universes) {
+    if (u.name) byName[u.name.toLowerCase().trim()] = u;
+  }
+  // Parcourir les nav-btn configurables (data-c)
+  document.querySelectorAll('.nav-btn[data-c]').forEach(btn => {
+    const uniId = btn.dataset.uni;
+    const labelEl = btn.querySelector('.nav-label');
+    if (!labelEl || !uniId) return;
+    const name = labelEl.textContent.toLowerCase().trim();
+    const uni = byName[name];
+    if (!uni || !Array.isArray(uni.modules)) return;
+    _applyUniverseTabs(uniId, uni.modules);
+  });
+}
+
+// ── Profil (thème + densité + onglets univers depuis /api/profile) ─
 async function _loadProfile(){
   const token=_getToken();
   if(!token)return;
@@ -1231,15 +1451,17 @@ async function _loadProfile(){
     const r=await fetch('/api/profile',{headers:{'Authorization':'Bearer '+token}});
     if(!r.ok)return;
     const p=await r.json();
-    if(p.theme){
-      document.documentElement.setAttribute('data-theme',p.theme);
-      document.querySelectorAll('.t-dot').forEach(d=>d.classList.toggle('on',d.dataset.t===p.theme));
+    const prof = p.profile || p; // /api/profile renvoie {profile:{...}}
+    if(prof.theme){
+      document.documentElement.setAttribute('data-theme',prof.theme);
+      document.querySelectorAll('.t-dot').forEach(d=>d.classList.toggle('on',d.dataset.t===prof.theme));
       setTimeout(drawSparks,40);
     }
-    if(p.density){
-      document.documentElement.setAttribute('data-density',p.density);
-      document.querySelectorAll('.d-btn').forEach(b=>b.classList.toggle('on',b.dataset.d===p.density));
+    if(prof.density){
+      document.documentElement.setAttribute('data-density',prof.density);
+      document.querySelectorAll('.d-btn').forEach(b=>b.classList.toggle('on',b.dataset.d===prof.density));
     }
+    _applyUniverseTabsFromProfile(prof);
   }catch{}
 }
 
@@ -1557,6 +1779,8 @@ function goSub(el,subId){
     'sub-infra':'Infrastructure','sub-rmm':'RMM Clients','sub-tel':'Téléphonie','sub-mkt':'Marketing',
     'sub-briefing':'Briefing','sub-agenda':'Agenda',
     'sub-skills':'Compétences','sub-mem':'Mémoire','sub-settings':'Paramètres',
+    'sub-senses':'Capteurs','sub-music':'Musique',
+    ..._VIEW_LABELS,
   };
   const sep=document.getElementById('bc-sep');
   const sub_el=document.getElementById('bc-sub');
@@ -1575,8 +1799,11 @@ function goSub(el,subId){
     'sub-domo':     ['page',     {page:'home',           hint:'État domotique complet'}],
     'sub-infra':    ['infra',    {}],
     'sub-rmm':      ['page',     {page:'printers',       hint:'RMM clients actifs'}],
+    'sub-senses':   ['page',     {page:'senses',         hint:'État capteurs'}],
+    'sub-music':    ['page',     {page:'music',          hint:'Lecteur musique'}],
   };
-  if(_VM[subId]){const[v,o]=_VM[subId];_loadSubView(subId,v,o);}
+  const _vmEntry = _VM[subId] || _VIEW_OVERRIDES[subId];
+  if(_vmEntry){const[v,o]=_vmEntry;_loadSubView(subId,v,o);}
 }
 
 // ── Chat toggle ────────────────────────────────────────────────
@@ -1784,6 +2011,34 @@ window.adaNavigate=function(viewName){
     if(uniBtn)goUni(t,uniBtn);
   }
 };
+
+// ── Domotique — appareils filtrés ────────────────────────────
+let _devShowAll=false;
+function _devSw(sw){
+  sw.classList.toggle('on');
+  const card=sw.closest('.dev-card');
+  if(card)card.dataset.active=sw.classList.contains('on')?'1':'0';
+  _devFilter(document.getElementById('dev-search')?.value||'');
+}
+function _devFilter(q){
+  const q2=(q||'').toLowerCase().trim();
+  let active=0,total=0;
+  document.querySelectorAll('#dev-grid .dev-card').forEach(c=>{
+    total++;
+    const match=!q2||(c.dataset.name||'').toLowerCase().includes(q2);
+    const on=c.dataset.active==='1';
+    if(on)active++;
+    c.hidden=!(match&&(_devShowAll||on));
+  });
+  const el=document.getElementById('dev-count');
+  if(el)el.textContent=active+' actif'+(active>1?'s':'')+' · '+total+' total';
+}
+function _devToggleAll(){
+  _devShowAll=!_devShowAll;
+  const btn=document.getElementById('dev-show-all');
+  if(btn)btn.textContent=_devShowAll?'Actifs seuls':'Tout afficher';
+  _devFilter(document.getElementById('dev-search')?.value||'');
+}
 
 // ── Shopping ───────────────────────────────────────────────────
 function toggleShop(el){
