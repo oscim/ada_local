@@ -77,17 +77,24 @@ PLUGIN_CATALOG = [
 async def plugin_catalog():
     """
     Retourne la liste de tous les modules déclarés (actifs ou non)
-    avec leur état courant depuis MODULES_ENABLED + registry.
+    avec leur état courant.
+    settings_store.modules.<key> a la priorité sur config.MODULES_ENABLED.
     Utilisé par le panneau Plugins des paramètres.
     """
     from config import MODULES_ENABLED
+    from core.settings_store import settings as _settings
+
+    def _is_enabled(key: str) -> bool:
+        store_val = _settings.get(f"modules.{key}")
+        return store_val if store_val is not None else MODULES_ENABLED.get(key, False)
+
     return [
         {
             "key":     entry["key"],
             "label":   entry["label"],
             "icon":    entry["icon"],
             "sub":     entry["sub"],
-            "enabled": MODULES_ENABLED.get(entry["key"], False),
+            "enabled": _is_enabled(entry["key"]),
             "loaded":  plugin_registry.is_active(entry["key"]),
         }
         for entry in PLUGIN_CATALOG

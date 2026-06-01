@@ -986,20 +986,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     </div>
     <!-- Sociétés : chargée dynamiquement par le module societe -->
     <div class="subview on" id="sub-soc"></div>
-    <div class="subview" id="sub-infra">
-      <div class="sec">Nœuds infrastructure</div>
-      <div class="node-grid">
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">Proxmox Node 1</div><div class="ns">CPU 18% · 12/32GB</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">Proxmox Node 2</div><div class="ns">CPU 9% · 8/32GB</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">NAS Sauvegarde</div><div class="ns">14.2 / 20 TB</div></div></div>
-        <div class="node"><div class="nd nd-w"></div><div><div class="nn">Dupont SA</div><div class="ns">Disque C: 91% ⚠</div></div></div>
-        <div class="node"><div class="nd nd-w"></div><div><div class="nn">Martin & Fils</div><div class="ns">SVC_BACKUP ⚠</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">Serveur Tél.</div><div class="ns">4 lignes actives</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">Ollama LLM</div><div class="ns">mistral · 4.2s avg</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">ADA Web</div><div class="ns">Python · TLS OK</div></div></div>
-        <div class="node"><div class="nd nd-ok"></div><div><div class="nn">DNS / Proxy</div><div class="ns">nginx · cert OK</div></div></div>
-      </div>
-    </div>
+    <div class="subview" id="sub-infra"></div>
     <div class="subview" id="sub-rmm">
       <div class="sec">Clients RMM</div>
       <div class="node-grid" style="grid-template-columns:1fr 1fr">
@@ -1580,7 +1567,7 @@ function goSub(el,subId){
     'sub-skills':   ['skills',   {}],
     'sub-settings': ['settings', {}],
     'sub-domo':     ['page',     {page:'home',           hint:'État domotique complet'}],
-    'sub-infra':    ['page',     {page:'infrastructure', hint:'État infrastructure'}],
+    'sub-infra':    ['infra',    {}],
     'sub-rmm':      ['page',     {page:'printers',       hint:'RMM clients actifs'}],
   };
   if(_VM[subId]){const[v,o]=_VM[subId];_loadSubView(subId,v,o);}

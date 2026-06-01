@@ -112,6 +112,10 @@ if _MODULES_ENABLED.get("societe", False):
 from web.router_plugins import router as _plugins_router
 app.include_router(_plugins_router)
 
+# routes_infra : Proxmox/PBS multi-instance — toujours monté, guard interne
+from web.routes_infra import router as _infra_router
+app.include_router(_infra_router)
+
 # MODULE_DOCUMENTS: base documentaire RAG locale — toujours monté, guard interne
 from web.router_documents import router as _documents_router
 app.include_router(_documents_router)

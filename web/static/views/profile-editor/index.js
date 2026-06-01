@@ -100,8 +100,9 @@ function _renderUniverses() {
         <span class="pe-row-meta">${_esc(u.color)} · ${_esc(preview)}</span>
       </div>
       <button class="pe-icon-btn"               data-eu="${_esc(u.id)}" title="Modifier">✎</button>
-      <button class="pe-icon-btn danger"         data-du="${_esc(u.id)}" title="Supprimer"
-              ${inUse ? 'disabled title="Utilisé par un profil"' : ''}>🗑</button>
+      <button class="pe-icon-btn danger"         data-du="${_esc(u.id)}"
+              data-inuse="${inUse ? '1' : ''}"
+              title="${inUse ? 'Utilisé par un profil — suppression possible' : 'Supprimer'}">🗑</button>
     </div>
     <div class="pe-editor-slot" id="slot-u-${u.id}"></div>`;
   }).join('');
@@ -135,7 +136,10 @@ function _renderUniverses() {
   });
   panel.querySelectorAll('[data-du]').forEach(btn => {
     btn.onclick = async () => {
-      if (!confirm('Supprimer cet univers ?')) return;
+      const msg = btn.dataset.inuse
+        ? 'Cet univers est utilisé par un ou plusieurs profils.\nLe supprimer le retirera de ces profils.\nContinuer ?'
+        : 'Supprimer cet univers ?';
+      if (!confirm(msg)) return;
       try {
         const r = await fetch(`/api/universes/${btn.dataset.du}`, { method: 'DELETE', headers: _headers() });
         if (r.status === 204 || r.ok) {

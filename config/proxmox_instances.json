@@ -1,0 +1,19 @@
+[
+  {
+    "id": "ns3166084.ip-51-178-64.eu",
+    "label": "OT-mutu",
+    "host": "51.178.64.60",
+    "port": 8006,
+    "user": "root@pam",
+    "token_name": "ada",
+    "token_value": "5a734a3f-24e8-4d7c-8f09-5b7c79bb4ac1",
+    "verify_ssl": false,
+    "enabled": true,
+    "universe": "opent",
+    "company_id": "opentechno",
+    "tags": [
+      "OT mutu"
+    ],
+    "pbs_id": null
+  }
+]
