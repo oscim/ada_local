@@ -1143,6 +1143,20 @@ async def process_message(
     # Injection des skills + mémoire long terme, comme l'app
     messages = skill_manager.inject(messages, user_text)
 
+    # AutoSkills SQLite : injection des apprentissages adaptatifs
+    _autoskill_meta: dict = {"skills_injected": [], "skills_count": 0}
+    try:
+        from core.skills.autoskills_runtime import inject_autoskills
+        messages, _autoskill_meta = inject_autoskills(
+            messages,
+            query=user_text,
+            domain=_effective_ctx or plugin_context or "auto",
+            request_id=_req_id,
+            session_id=session_id,
+        )
+    except Exception:
+        pass
+
     # MODULE_DOCUMENTS: injection RAG documentaire (entre skills et mémoire)
     _doc_meta = None
     _rag_start = _time.perf_counter()
@@ -1213,6 +1227,16 @@ async def process_message(
             pass
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", full_response)
+        try:
+            import asyncio as _asyncio
+            from core.skills.autoskills_runtime import maybe_update_autoskill
+            _asyncio.create_task(maybe_update_autoskill(
+                history=history, user_text=user_text, assistant_text=full_response,
+                domain=_effective_ctx or plugin_context or "auto",
+                request_id=_req_id, session_id=session_id, call_llm=_call_llm,
+            ))
+        except Exception:
+            pass
         return
 
     # qwen_thinking ou chat standard (vision/youtube/cad/print inclus en fallback texte)
@@ -1240,3 +1264,13 @@ async def process_message(
             pass
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", full_response)
+        try:
+            import asyncio as _asyncio
+            from core.skills.autoskills_runtime import maybe_update_autoskill
+            _asyncio.create_task(maybe_update_autoskill(
+                history=history, user_text=user_text, assistant_text=full_response,
+                domain=_effective_ctx or plugin_context or "auto",
+                request_id=_req_id, session_id=session_id, call_llm=_call_llm,
+            ))
+        except Exception:
+            pass

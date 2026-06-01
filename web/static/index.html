@@ -1112,25 +1112,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     <div class="ctx-tag ct-dash on" style="pointer-events:none">Dashboard</div>
   </div>
 
-  <div id="chat-msgs">
-    <div class="msg msg-ada">
-      <div class="from"></div>
-      Bonjour Aurélien. Tout est opérationnel — 144 appareils, Proxmox 12/12, backups nuit ✓. <strong style="color:var(--orange)">3 alertes</strong> actives dont 2 RMM. Je t'attends.
-    </div>
-    <div class="msg msg-user">Assure la sauvegarde VM "compta" chez Martin & Fils</div>
-    <div class="msg msg-ada">
-      <div class="from"></div>
-      Contexte OpenTechno. Lancement snapshot + backup de <code style="background:rgba(255,255,255,.07);padding:1px 5px;border-radius:3px">compta</code> via Proxmox Node 1.
-      <div class="action-card">
-        <div class="ac-lbl">ACTION EN ATTENTE</div>
-        vzdump 112 --compress zstd --storage nas-backup
-        <div class="ac-btns">
-          <button class="ac-btn ok" onclick="confirmAct(this)">✓ Confirmer</button>
-          <button class="ac-btn ko" onclick="cancelAct(this)">✕ Annuler</button>
-        </div>
-      </div>
-    </div>
-  </div>
+  <div id="chat-msgs"></div>
 
   <div id="typing">
     <div class="td"></div><div class="td"></div><div class="td"></div>

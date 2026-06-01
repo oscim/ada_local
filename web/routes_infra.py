@@ -278,6 +278,51 @@ async def pbs_status(pbs_id: str | None = Query(None)):
     return result
 
 
+@router.get("/api/pbs/snapshots")
+async def pbs_snapshots(
+    pbs_id:      str        = Query(..., description="ID de l'instance PBS"),
+    store:       str        = Query(..., description="Nom du datastore"),
+    backup_type: str | None = Query(None, description="Filtre type : vm | ct | host"),
+    backup_id:   str | None = Query(None, description="Filtre backup-id (ex: '100')"),
+):
+    """Liste les snapshots d'un datastore PBS, avec filtres optionnels."""
+    pbs = _cfg.get_pbs(pbs_id)
+    if not pbs:
+        raise HTTPException(status_code=404, detail=f"PBS '{pbs_id}' introuvable")
+    try:
+        from core.infra.pbs_client import PBSClient
+        client = PBSClient(pbs)
+        snaps = await client.list_snapshots(
+            datastore=store,
+            backup_type=backup_type,
+            backup_id=backup_id,
+        )
+        return {"pbs_id": pbs_id, "store": store, "count": len(snaps), "snapshots": snaps}
+    except Exception as exc:
+        logger.warning("[routes_infra] pbs_snapshots %s/%s: %s", pbs_id, store, exc)
+        return {"pbs_id": pbs_id, "store": store, "error": str(exc)}
+
+
+@router.get("/api/pbs/tasks")
+async def pbs_tasks(
+    pbs_id:      str  = Query(..., description="ID de l'instance PBS"),
+    limit:       int  = Query(50, ge=1, le=500),
+    errors_only: bool = Query(False, description="Ne retourner que les tâches en erreur"),
+):
+    """Tâches récentes du nœud PBS (via /nodes/localhost/tasks)."""
+    pbs = _cfg.get_pbs(pbs_id)
+    if not pbs:
+        raise HTTPException(status_code=404, detail=f"PBS '{pbs_id}' introuvable")
+    try:
+        from core.infra.pbs_client import PBSClient
+        client = PBSClient(pbs)
+        tasks = await client.get_tasks(limit=limit, errors_only=errors_only)
+        return {"pbs_id": pbs_id, "count": len(tasks), "tasks": tasks}
+    except Exception as exc:
+        logger.warning("[routes_infra] pbs_tasks %s: %s", pbs_id, exc)
+        return {"pbs_id": pbs_id, "error": str(exc)}
+
+
 # ── Profils de backup ─────────────────────────────────────────────────────────
 
 @router.get("/api/proxmox/profiles")

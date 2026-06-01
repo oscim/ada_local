@@ -146,6 +146,25 @@ DEFAULT_SETTINGS = {
         "min_query_length": 3,
         "include_sources_in_answer": True,
     },
+    # MODULE_AUTOSKILLS: mémoire procédurale adaptative SQLite/FTS5
+    "autoskills": {
+        "enabled": True,
+        "inject_enabled": True,
+        "generate_enabled": True,
+        "min_turns": 4,
+        "min_content_len": 100,
+        "min_confidence": 0.62,
+        "max_injected": 5,
+        "max_generation_history": 20,
+        "cooldown_minutes": 10,
+        "default_domain": "auto",
+        "allow_core_domain_auto_write": False,
+        "archive_after_days": 30,
+        "auto_promote_threshold": 2,
+        "generation_model": "",
+        "merge_model": "",
+        "debug": False,
+    },
 }
 
 

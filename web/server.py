@@ -1674,6 +1674,56 @@ async def api_skills_delete(skill_id: str):
     return {"ok": True}
 
 
+@app.patch("/api/autoskills/{skill_id}")
+async def api_skills_update(skill_id: str, body: dict):
+    """Mise à jour partielle d'une autoskill (name, summary, content, priority, domain)."""
+    skill = _skills_get(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    updated_id = _skills_save(
+        skill_id=skill_id,
+        name=body.get("name", skill["name"]),
+        content=body.get("content", skill["content"]),
+        domain=body.get("domain", skill["domain"]),
+        source=skill.get("source", "manual"),
+        summary=body.get("summary", skill.get("summary", "")),
+        priority=int(body.get("priority", skill["priority"])),
+    )
+    return {"id": updated_id, "ok": True}
+
+
+@app.post("/api/autoskills/{skill_id}/feedback")
+async def api_skills_feedback(skill_id: str, body: dict):
+    """Enregistre un feedback utilisateur sur une autoskill."""
+    feedback = body.get("feedback", "").strip()
+    if feedback not in ("positive", "negative", "neutral"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="feedback doit être positive|negative|neutral")
+    from core.skills import get_skill
+    skill = get_skill(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    # Feedback positif → record_success (incrémente usage + auto-promotion)
+    if feedback == "positive":
+        from core.skills import record_success
+        record_success(skill_id)
+    # Stocker dans autoskill_feedback
+    try:
+        from core.skills.skills_db import get_connection
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO autoskill_feedback (skill_id, session_id, request_id, feedback, reason) VALUES (?,?,?,?,?)",
+            (skill_id, body.get("session_id"), body.get("request_id"), feedback, body.get("reason", "")),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return {"ok": True, "feedback": feedback}
+
+
 @app.post("/api/autoskills/maintenance")
 async def api_skills_maintenance():
     """Lance la maintenance manuelle des autoskills."""

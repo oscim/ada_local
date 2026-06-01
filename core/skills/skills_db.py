@@ -83,6 +83,41 @@ CREATE INDEX IF NOT EXISTS idx_skills_domain   ON skills(domain);
 CREATE INDEX IF NOT EXISTS idx_skills_status   ON skills(status);
 CREATE INDEX IF NOT EXISTS idx_skills_priority ON skills(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_source   ON skills(source);
+
+-- Tables AutoSkills (traçabilité)
+CREATE TABLE IF NOT EXISTS autoskill_observations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id        TEXT,
+    session_id      TEXT NOT NULL,
+    domain          TEXT,
+    user_text       TEXT NOT NULL,
+    assistant_text  TEXT NOT NULL,
+    extracted_summary TEXT,
+    confidence      REAL NOT NULL DEFAULT 0,
+    action          TEXT NOT NULL, -- 'created' | 'updated' | 'skipped' | 'candidate'
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS autoskill_feedback (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id    TEXT NOT NULL,
+    session_id  TEXT,
+    request_id  TEXT,
+    feedback    TEXT NOT NULL, -- 'positive' | 'negative' | 'neutral'
+    reason      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS autoskill_injections (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    skill_id    TEXT NOT NULL,
+    session_id  TEXT,
+    request_id  TEXT,
+    query       TEXT NOT NULL,
+    domain      TEXT,
+    score       REAL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
