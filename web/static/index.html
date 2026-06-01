@@ -86,6 +86,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);
 #app.chat-full{
   grid-template-columns:var(--nav-w) 180px 1fr;
 }
+/* Chat étendu plein écran (hors nav) */
+#app.chat-expanded{
+  grid-template-columns:var(--nav-w) 1fr;
+}
+#app.chat-expanded #content{display:none;}
+@media(max-width:768px){#app.chat-expanded{grid-template-columns:var(--nav-w) 1fr;}}
 /* Chat caché : only toggle knob visible */
 #app.chat-hidden{
   grid-template-columns:var(--nav-w) 1fr 13px;
@@ -547,6 +553,14 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;color:var(--text-dim);
   background:var(--surface2);border:1px solid var(--border);padding:2px 7px;border-radius:4px;
 }
+.chat-expand-btn{
+  display:flex;align-items:center;justify-content:center;
+  background:none;border:1px solid var(--border);border-radius:5px;
+  width:22px;height:22px;cursor:pointer;color:var(--text-dim);font-size:13px;
+  transition:color .13s,background .13s;flex-shrink:0;margin-left:4px;
+}
+.chat-expand-btn:hover{color:var(--accent);background:var(--surface2);}
+@media(max-width:768px){.chat-expand-btn{display:none;}}
 .pulse{animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
 
@@ -1102,6 +1116,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
     <div class="s-dot dot-g pulse" style="width:6px;height:6px;border-radius:50%;flex-shrink:0"></div>
     <div class="chat-head-title">ADA</div>
     <div class="chat-model">mistral · local</div>
+    <button id="chat-expand-btn" class="chat-expand-btn" onclick="toggleChatExpand()" title="Agrandir">⤡</button>
   </div>
 
   <div class="ctx-bar" id="ctx-bar">
@@ -1583,9 +1598,27 @@ function toggleChat(){
     chatHidden=!chatHidden;
     app.classList.toggle('chat-hidden',chatHidden);
     app.classList.remove('chat-full');
+    if(chatHidden){
+      app.classList.remove('chat-expanded');
+      const eb=document.getElementById('chat-expand-btn');
+      if(eb){eb.textContent='⤡';eb.title='Agrandir';}
+    }
     const tog=document.getElementById('chat-toggle');
     if(tog)tog.textContent=chatHidden?'▸':'◂';
   }
+}
+
+function toggleChatExpand(){
+  const app=document.getElementById('app');
+  const btn=document.getElementById('chat-expand-btn');
+  const expanded=app.classList.toggle('chat-expanded');
+  if(expanded){
+    app.classList.remove('chat-hidden','chat-full');
+    chatHidden=false;
+    const tog=document.getElementById('chat-toggle');
+    if(tog)tog.textContent='◂';
+  }
+  if(btn){btn.textContent=expanded?'⤢':'⤡';btn.title=expanded?'Réduire':'Agrandir';}
 }
 
 // ── Admin menu ────────────────────────────────────────────────

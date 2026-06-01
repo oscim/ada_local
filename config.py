@@ -2,6 +2,18 @@
 Centralized configuration for Pocket AI.
 """
 
+# --- Radar Local Event Console ---
+RADAR_ENABLED: bool = True
+RADAR_DB_PATH: str = "data/radar/events.sqlite"
+RADAR_MAX_EVENTS: int = 100_000
+RADAR_RETENTION_DAYS: int = 30
+RADAR_TEXT_PREVIEW_MAX: int = 300
+RADAR_SENSITIVE_FIELDS: list = [
+    "api_key", "token", "access_token", "refresh_token",
+    "authorization", "password", "secret", "cookie",
+    "session_cookie", "private_key",
+]
+
 # --- Model Configuration ---
 RESPONDER_MODEL = "mistral:latest"
 OLLAMA_URL = "http://localhost:11434/api"

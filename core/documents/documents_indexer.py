@@ -7,9 +7,19 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time as _time
 import uuid
 from pathlib import Path
 from typing import Generator
+
+
+def _radar(**kw) -> None:
+    """Wraper non-bloquant pour emit_event Radar."""
+    try:
+        from web.radar.events import emit_event
+        emit_event(**kw)
+    except Exception:
+        pass
 
 
 # ── Chunk Markdown ─────────────────────────────────────────────────────────
@@ -166,6 +176,12 @@ def index_all(force: bool = False) -> dict:
     chunk_overlap: int = int(settings.get("documents.chunk_overlap", 200))
     max_size_bytes: int = 5 * 1024 * 1024  # 5 Mo
 
+    job_id = f"job_{uuid.uuid4().hex[:12]}"
+    _radar(type="job.started", level="info", module="documents.indexer",
+           job_id=job_id, message="Indexation documentaire démarrée",
+           metadata={"force": force, "root": root_path_str})
+    _job_start = _time.perf_counter()
+
     for filepath in _walk(root_path, extensions, ignore_dirs):
         try:
             r = index_file(
@@ -189,6 +205,10 @@ def index_all(force: bool = False) -> dict:
     result["deleted"] = remove_missing_files()
 
     total = result["indexed"] + result["updated"]
+    _radar(type="job.completed", level="info", module="documents.indexer",
+           job_id=job_id, message="Indexation terminée",
+           duration_ms=int((_time.perf_counter() - _job_start) * 1000),
+           metadata={**result})
     print(
         f"[Documents] Indexation terminée — "
         f"{total} traités, {result['skipped']} ignorés, "
@@ -247,6 +267,11 @@ def index_file(
         is_update = row is not None
         doc_id = row["id"] if row else str(uuid.uuid4())
 
+        _radar(type="document.parsing.started", level="info", module="documents.indexer",
+               document_id=doc_id, message=f"Parsing: {rel_path}",
+               metadata={"path": rel_path, "size_bytes": size})
+        _t_parse = _time.perf_counter()
+
         if is_update:
             # Supprimer les anciens chunks (les triggers FTS s'en chargent)
             conn.execute("DELETE FROM document_chunks WHERE document_id=?", (doc_id,))
@@ -269,6 +294,7 @@ def index_file(
             )
 
         # Insérer les nouveaux chunks
+        _t_chunk = _time.perf_counter()
         chunks = chunk_markdown(body, chunk_size=chunk_size, overlap=chunk_overlap)
         for idx, chunk in enumerate(chunks):
             chunk_id = str(uuid.uuid4())
@@ -284,7 +310,15 @@ def index_file(
         _log(conn, "INFO", f"{'Mis à jour' if is_update else 'Indexé'} : {rel_path} ({len(chunks)} chunks)", str(path))
 
     conn.close()
-    return "updated" if is_update else "indexed"
+
+    action = "updated" if is_update else "indexed"
+    _radar(type=f"document.indexing.completed", level="info", module="documents.indexer",
+           document_id=doc_id,
+           duration_ms=int((_time.perf_counter() - _t_parse) * 1000),
+           message=f"{action.capitalize()}: {rel_path}",
+           metadata={"chunks": len(chunks), "size_bytes": size, "action": action,
+                     "chunk_ms": int((_time.perf_counter() - _t_chunk) * 1000)})
+    return action
 
 
 def remove_missing_files() -> int:

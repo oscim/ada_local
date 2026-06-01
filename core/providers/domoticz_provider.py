@@ -159,10 +159,20 @@ class DomoticzProvider(BaseProvider):
             have_timeout = dev.get("HaveTimeout", False)
             available = have_timeout is False or have_timeout == "false"
 
+            # Scènes et Groupes Domoticz partagent le même espace d'IDX que les
+            # devices — on préfixe leur provider_entity_id avec 's' pour éviter
+            # la collision (ex: Group 'Atelier' idx=19 vs Device 'DEP EXT Portail' idx=19)
+            if d_type in ("Scene", "Group"):
+                p_eid = f"s{idx}"
+                eid   = f"{self.PROVIDER_ID}.s{idx}"
+            else:
+                p_eid = idx
+                eid   = f"{self.PROVIDER_ID}.{idx}"
+
             entities.append(Entity(
-                id=f"{self.PROVIDER_ID}.{idx}",
+                id=eid,
                 provider=self.PROVIDER_ID,
-                provider_entity_id=idx,
+                provider_entity_id=p_eid,
                 name=name,
                 type=entity_type,
                 zone=infer_zone(name),
@@ -191,11 +201,13 @@ class DomoticzProvider(BaseProvider):
     def toggle(self, provider_entity_id: str, on: bool) -> bool:
         try:
             from core.domoticz_control import domoticz_manager
-            idx       = str(provider_entity_id)
-            d_type    = self._idx_type_map.get(idx, "")
+            p_eid = str(provider_entity_id)
+            # Scènes/Groupes ont un provider_entity_id préfixé 's'
+            if p_eid.startswith("s") and p_eid[1:].isdigit():
+                real_idx = p_eid[1:]
+                return domoticz_manager.switch_scene_or_group(real_idx, on)
+            idx       = p_eid
             d_subtype = self._idx_subtype_map.get(idx, "")
-            if d_type in ("Scene", "Group"):
-                return domoticz_manager.switch_scene_or_group(idx, on)
             # Relais impulsionnels : switchcmd=Off ne transmet pas de signal RF
             # → seule la commande Toggle envoie l'impulsion physique
             if d_subtype == "Impuls":

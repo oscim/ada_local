@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sys
+import time as _time
+import uuid as _uuid
 from typing import AsyncGenerator
 
 import httpx
@@ -311,6 +313,19 @@ _DOMOTIQUE_TRIGGERS = (
     "volet", "volets", "portail", "thermostat",
 )
 
+# Patterns déterministes pour l'état des entités (évitent le LLM)
+_STATE_QUERY_PATTERNS = (
+    re.compile(r"quell?es?\s+(lumi[eè]res?|lumi[eè]re|switch|switches|prise[s]?|appareil[s]?|lampe[s]?)\s+(sont\s+)?(allum[ée]e?s?|on\b)", re.IGNORECASE),
+    re.compile(r"quell?es?\s+(lumi[eè]res?|lumi[eè]re|switch|switches|prise[s]?|appareil[s]?|lampe[s]?)\s+(sont\s+)?(éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?|lampes?)\s+(allum[ée]e?s?|on\b)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?|lampes?)\s+(éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(liste|montre|affiche|donne[- ]moi)\s+(les\s+)?(lumi[eè]res?|switch|prises?|appareils?)\s+(allum[ée]e?s?|éteint[es]?|on\b|off\b)", re.IGNORECASE),
+    re.compile(r"état\s+des?\s+(lumi[eè]res?|switch|prises?|appareils?)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?)\s+(qui\s+)(sont\s+)?(allum[ée]e?s?|éteint[es]?|on\b|off\b)", re.IGNORECASE),
+    re.compile(r"quoi\s+(est|sont)\s+(allum[ée]e?s?|on\b|éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(il y a quoi|qu['']est[- ]ce qui)\s+(est\s+)?(allum[ée]e?|on\b)", re.IGNORECASE),
+)
+
 
 # ---------------------------------------------------------------------------
 # Agent web Playwright (pipeline version — sans SSE, yield chunks)
@@ -464,6 +479,82 @@ def _system_prompt(plugin_context_id: str | None = None) -> str:
     except Exception:
         pass
     return base
+
+
+def _format_entity_state_answer(user_text: str) -> str | None:
+    """
+    Répond directement (sans LLM) aux questions sur l'état des entités.
+    Retourne None si la question ne correspond pas à un pattern d'état.
+    """
+    text_lower = user_text.lower()
+
+    # Détecter si la question porte sur les allumés ou les éteints
+    want_on: bool | None = None
+    if any(w in text_lower for w in ("allumé", "allumée", "allumées", "allumés", " on ", "qui sont on")):
+        want_on = True
+    elif any(w in text_lower for w in ("éteint", "éteinte", "éteintes", "éteints", " off ", "qui sont off")):
+        want_on = False
+    if text_lower.rstrip("? !").endswith(("allumé", "allumée", "allumées", "allumés", "on")):
+        want_on = True
+    if text_lower.rstrip("? !").endswith(("éteint", "éteinte", "éteintes", "éteints", "off")):
+        want_on = False
+
+    # Vérifier si un pattern regex correspond
+    matched = any(p.search(user_text) for p in _STATE_QUERY_PATTERNS)
+    # Fallback : lumière + (allumé|éteint) dans le même message
+    if not matched:
+        has_light_kw = any(w in text_lower for w in ("lumière", "lumières", "lumiere", "lumieres", "lampe", "lampes"))
+        has_state_kw = any(w in text_lower for w in ("allumé", "allumée", "allumées", "allumés", "éteint", "éteinte", "éteintes", "éteints"))
+        if has_light_kw and has_state_kw:
+            matched = True
+
+    if not matched:
+        return None
+
+    try:
+        from core.unified_entities import unified_entity_service
+        entities = unified_entity_service.get_unified_entities(force_refresh=True)
+    except Exception as ex:
+        return f"❌ Impossible de récupérer les entités domotiques : {ex}"
+
+    # Filtrer par type — en Domoticz les lumières sont souvent des switch/scene
+    TYPE_FILTER: list[str] = []
+    if any(w in text_lower for w in ("switch", "switches", "prise", "prises")):
+        TYPE_FILTER = ["switch"]
+    elif any(w in text_lower for w in ("lumière", "lumières", "lumiere", "lumieres", "lampe", "lampes")):
+        # Les lumières peuvent être light, switch ou scene selon le provider
+        TYPE_FILTER = ["light", "switch", "scene"]
+    # Sinon : pas de filtre → tous les types contrôlables
+
+    filtered = [
+        e for e in entities
+        if (not TYPE_FILTER or e.type in TYPE_FILTER)
+        and (want_on is None or (e.state == "on") == want_on)
+    ]
+
+    if want_on is True:
+        state_label, icon = "allumées", "💡"
+    elif want_on is False:
+        state_label, icon = "éteintes", "🌑"
+    else:
+        state_label, icon = "actives", "📊"
+
+    type_label = ""
+    if TYPE_FILTER == ["switch"]:
+        type_label = "prises/switches "
+
+    if not filtered:
+        return f"Aucune {type_label}entité {state_label} en ce moment."
+
+    lines = [f"{icon} **{len(filtered)} {type_label}entité{'s' if len(filtered) > 1 else ''} {state_label} :**\n"]
+    for e in filtered:
+        zone = f" *[{e.zone}]*" if e.zone and e.zone != "Other" else ""
+        extras = []
+        if e.attributes and e.attributes.get("brightness") is not None:
+            extras.append(f"{round(e.attributes['brightness'] / 2.55)}%")
+        extra_str = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- **{e.name}**{zone}{extra_str}")
+    return "\n".join(lines)
 
 
 def _format_entities_context() -> str:
@@ -686,6 +777,22 @@ async def process_message(
 
     _effective_ctx = context_id or company_context or None
 
+    # ── Radar : génération du request_id et événement d'entrée ──────────────
+    _req_id    = f"req_{_uuid.uuid4().hex[:16]}"
+    _req_start = _time.perf_counter()
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _emit_ev(
+            type="rag.query.received",
+            level="info",
+            module="web.pipeline",
+            request_id=_req_id,
+            session_id=session_id,
+            metadata={"query_preview": user_text[:300]},
+        )
+    except Exception:
+        pass
+
     text_lower = user_text.lower()
 
     # Ajout d'une URL à la surveillance d'infrastructure
@@ -771,6 +878,14 @@ async def process_message(
             memory_store.save(session_id, "assistant", full_answer)
             return
 
+    # Routing déterministe : état des entités domotiques (liste on/off sans LLM)
+    state_answer = _format_entity_state_answer(user_text)
+    if state_answer is not None:
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", state_answer)
+        yield state_answer
+        return
+
     # Commandes de contrôle domotique : "allume X", "éteins X", "ouvre X"…
     m_ctrl = _CONTROL_RE.match(user_text.strip())
     if m_ctrl:
@@ -848,9 +963,24 @@ async def process_message(
     messages = skill_manager.inject(messages, user_text)
 
     # MODULE_DOCUMENTS: injection RAG documentaire (entre skills et mémoire)
+    _doc_meta = None
+    _rag_start = _time.perf_counter()
     try:
         from core.documents.documents_injector import inject_documentation
         messages, _doc_meta = inject_documentation(messages, user_text, context_id=_effective_ctx)
+    except Exception:
+        pass
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _chunks_found = len(_doc_meta) if _doc_meta else 0
+        _emit_ev(
+            type="rag.search.completed" if _chunks_found > 0 else "rag.context.empty",
+            level="info",
+            module="web.pipeline",
+            request_id=_req_id,
+            duration_ms=int((_time.perf_counter() - _rag_start) * 1000),
+            metadata={"chunks_found": _chunks_found},
+        )
     except Exception:
         pass
 
@@ -878,7 +1008,21 @@ async def process_message(
 
     # function_gemma: tool-calling complet puis réponse naturelle
     if route == "function_gemma":
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="llm.call.started", level="info", module="web.pipeline",
+                     request_id=_req_id, metadata={"route": "function_gemma"})
+        except Exception:
+            pass
+        _llm_start = _time.perf_counter()
         response = await _call_with_tools(user_text, messages, plugin_context_id=_effective_ctx)
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="llm.call.completed", level="info", module="web.pipeline",
+                     request_id=_req_id,
+                     duration_ms=int((_time.perf_counter() - _llm_start) * 1000))
+        except Exception:
+            pass
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", response)
         if response and response.startswith("__confirm__"):
@@ -903,10 +1047,25 @@ async def process_message(
     # qwen_thinking ou chat standard (vision/youtube/cad/print inclus en fallback texte)
     thinking = route == "qwen_thinking"
     full_response = ""
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _emit_ev(type="llm.call.started", level="info", module="web.pipeline",
+                 request_id=_req_id, metadata={"route": route})
+    except Exception:
+        pass
+    _llm_start = _time.perf_counter()
     async for chunk in _stream_ollama(messages, thinking=thinking):
         full_response += chunk
         yield chunk
 
     if full_response:
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="rag.response.sent", level="info", module="web.pipeline",
+                     request_id=_req_id,
+                     duration_ms=int((_time.perf_counter() - _req_start) * 1000),
+                     metadata={"llm_ms": int((_time.perf_counter() - _llm_start) * 1000)})
+        except Exception:
+            pass
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", full_response)
