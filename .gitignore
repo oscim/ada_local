@@ -74,3 +74,4 @@ docs/margepro/openapi-history/openapi-12.109.0.json
 docs/margepro/usage/guide-admin.md
 docs/margepro/usage/guide-artisan.md
 docs/margepro/usage/guide-partenaire.md
+data/radar/events.sqlite
