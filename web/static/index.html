@@ -2273,12 +2273,58 @@ function cancelConfirm(btn){
   btn.closest('.confirm-card').innerHTML='<span style="color:var(--text-dim)">✕ Action annulée.</span>';
 }
 
+// ── Notifications système ──────────────────────────────────────
+async function _requestNotifPermission(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='default'){
+    await Notification.requestPermission();
+  }
+}
+
+function _sendNotif(title, body, icon){
+  if(!('Notification' in window)||Notification.permission!=='granted') return;
+  try{
+    const n=new Notification(title,{body:body||'',icon:icon||'/favicon.ico',requireInteraction:false});
+    setTimeout(()=>n.close(),8000);
+  }catch(e){}
+}
+
+// ── SSE Radar — écoute des événements temps réel ──────────────
+let _radarSSE=null;
+function _startRadarSSE(){
+  if(_radarSSE) return;
+  try{
+    _radarSSE=new EventSource('/api/radar/stream');
+    _radarSSE.onmessage=function(e){
+      let evt;
+      try{evt=JSON.parse(e.data);}catch{return;}
+      // timer.fired → notification système
+      if(evt.type==='timer.fired'){
+        const meta=evt.metadata||{};
+        const label=meta.label||'Timer';
+        const delay=meta.delay_minutes||'?';
+        _sendNotif(`⏰ Timer "${label}" terminé`,`Délai : ${delay} min`,'/favicon.ico');
+        showToast(`⏰ Timer "${label}" terminé (${delay} min)`);
+      }
+    };
+    _radarSSE.onerror=function(){
+      _radarSSE.close();_radarSSE=null;
+      // Reconnexion automatique après 15 s
+      setTimeout(_startRadarSSE,15000);
+    };
+  }catch(e){}
+}
+
 // ── Init ───────────────────────────────────────────────────────
 // Initialise le ctx-bar immédiatement (avant l'auth) pour éviter l'affichage des tags statiques
 try{_renderPluginCtxBar('dash');}catch(e){}
 (async()=>{
   const ok=await _checkAuth();
   if(!ok){await _showAuth();}else{await _onAuthenticated();}
+  // Demander la permission notifications après auth
+  await _requestNotifPermission();
+  // Démarrer l'écoute SSE radar
+  _startRadarSSE();
 })();
 </script>
 </body>
