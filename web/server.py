@@ -61,7 +61,8 @@ from core.routes.profiles import initialize as _profiles_init
 _PUBLIC_PREFIXES = (
     "/api/auth/",
     "/static/",
-    "/api/webhook/",   # webhooks entrants — auth propre par token secret
+    "/api/webhook/",         # webhooks entrants — auth propre par token secret
+    "/api/integrations/n8n/", # callbacks n8n → pas de JWT (service interne)
 )
 _PUBLIC_EXACT = {
     "/",

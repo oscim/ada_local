@@ -106,7 +106,8 @@ DEFAULT_SETTINGS = {
     },
     "n8n": {
         "url": "http://localhost:5678",
-        "timeout_s": 10.0,
+        "timeout_s": 30.0,
+        "long_running_timeout_s": 120.0,
         "fallback_enabled": True,
         "cooldown_s": 30.0,
     },

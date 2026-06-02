@@ -3,9 +3,13 @@ N8NExecutor — HTTP client for n8n webhooks with FunctionExecutor fallback.
 
 Call n8n_executor.call(action, params) → {success, message, data}.
 Never raises. Falls back to FunctionExecutor if n8n is unavailable.
+
+Découverte dynamique : interroge l'API n8n au démarrage pour lister les workflows
+actifs tagués 'ada' ou dont le nom commence par 'ADA'. TTL = 5 min.
 """
 
 import logging
+import re
 import threading
 import time
 from typing import Any
@@ -13,6 +17,13 @@ from typing import Any
 import requests
 
 from core.settings_store import settings as app_settings
+
+
+def _slugify(text: str) -> str:
+    """'ADA - Speed Test' → 'ada-speed-test'"""
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    return text.strip("-")
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +60,30 @@ class N8NExecutor:
     # Settings
     # ------------------------------------------------------------------
 
+    # Patterns d'actions connues comme lentes (speed test, benchmark, GC, verify...)
+    _LONG_RUNNING_PATTERNS = (
+        "speedtest", "speed_test", "speed-test",
+        "benchmark", "verify", "gc", "garbage",
+        "backup", "scan", "index",
+    )
+
     def _load_settings(self) -> tuple[str, float, bool, float]:
         """Return (webhook_base_url, timeout_s, fallback_enabled, cooldown_s)."""
         cfg = app_settings.get("n8n") or {}
         base_url   = cfg.get("url", "http://localhost:5678").rstrip("/") + "/webhook"
-        timeout_s  = float(cfg.get("timeout_s", 10.0))
+        timeout_s  = float(cfg.get("timeout_s", 30.0))
         fallback   = bool(cfg.get("fallback_enabled", True))
         cooldown_s = float(cfg.get("cooldown_s", 30.0))
         return base_url, timeout_s, fallback, cooldown_s
+
+    def _effective_timeout(self, action: str, base_timeout: float) -> float:
+        """Retourne un timeout plus long pour les workflows connus comme lents."""
+        cfg = app_settings.get("n8n") or {}
+        long_t = float(cfg.get("long_running_timeout_s", 120.0))
+        action_low = action.lower()
+        if any(p in action_low for p in self._LONG_RUNNING_PATTERNS):
+            return long_t
+        return base_timeout
 
     # ------------------------------------------------------------------
     # Cooldown helpers
@@ -101,6 +128,143 @@ class N8NExecutor:
         """
         self._plugin_webhooks.update(webhooks)
         logger.info("[N8N] %d webhooks plugins enregistrés", len(webhooks))
+
+    # ------------------------------------------------------------------
+    # Découverte dynamique des workflows n8n via API REST
+    # ------------------------------------------------------------------
+
+    _discovery_cache: list[dict] = []   # cache partagé (module-level via instance)
+    _discovery_ts: float = 0.0
+    _DISCOVERY_TTL: float = 300.0       # 5 minutes
+
+    def _discover_workflows(self) -> list[dict]:
+        """
+        Interroge l'API n8n pour lister les workflows actifs dont :
+          - le nom commence par 'ADA' (insensible à la casse), OU
+          - l'un des tags vaut 'ada'.
+        Retourne une liste de dicts {func_name, webhook_path, description, workflow_name}.
+        Cache TTL = 5 min. Silencieux en cas d'échec.
+        """
+        now = time.monotonic()
+        if now - self._discovery_ts < self._DISCOVERY_TTL and self._discovery_cache:
+            return self._discovery_cache
+
+        cfg = app_settings.get("n8n") or {}
+        api_key = cfg.get("api_key", "")
+        base = cfg.get("url", "http://localhost:5678").rstrip("/")
+
+        if not api_key:
+            logger.debug("[N8N] Pas d'api_key configurée — découverte workflows désactivée")
+            return []
+
+        try:
+            resp = requests.get(
+                f"{base}/api/v1/workflows",
+                headers={"X-N8N-API-KEY": api_key, "Accept": "application/json"},
+                timeout=5.0,
+                verify=False,
+            )
+            resp.raise_for_status()
+            workflows = resp.json().get("data", [])
+        except Exception as exc:
+            logger.warning("[N8N] Découverte workflows API échouée: %s", exc)
+            return self._discovery_cache  # garder le cache périmé si disponible
+
+        results = []
+        for wf in workflows:
+            if not wf.get("active"):
+                continue
+            wf_name = wf.get("name", "")
+            tags = [t.get("name", "").lower() for t in (wf.get("tags") or [])]
+
+            # Filtre : nom commence par "ADA" ou tag "ada"
+            if not (wf_name.upper().startswith("ADA") or "ada" in tags):
+                continue
+
+            # Chercher le nœud webhook pour extraire le path
+            nodes = wf.get("nodes") or []
+            webhook_node = next(
+                (
+                    n for n in nodes
+                    if n.get("type") in (
+                        "n8n-nodes-base.webhook",
+                        "@n8n/n8n-nodes-langchain.toolWebhook",
+                    )
+                ),
+                None,
+            )
+            if webhook_node:
+                webhook_path = webhook_node.get("parameters", {}).get("path", "").strip("/")
+            else:
+                webhook_path = ""
+
+            # Convention fallback : slug du nom ("ADA - Speed Test" → "ada-speed-test")
+            if not webhook_path:
+                webhook_path = _slugify(wf_name)
+
+            # Nom de fonction LLM : slug sans tirets ("ada-speed-test" → "ada_speed_test")
+            func_name = webhook_path.replace("-", "_")
+
+            # Description : notes du workflow ou description utile
+            raw_notes = (wf.get("meta") or {}).get("templateNotes", "").strip()
+            if raw_notes:
+                description = raw_notes
+            else:
+                # Retirer le préfixe "ADA" du nom pour la description
+                short_name = re.sub(r"^ada[\s\-:—]+", "", wf_name, flags=re.IGNORECASE).strip()
+                description = (
+                    f"Lance le workflow n8n '{wf_name}'. "
+                    f"Utilise cette fonction quand l'utilisateur demande : {short_name.lower()}. "
+                    f"Appelle '{func_name}' sans paramètres."
+                )
+
+            results.append({
+                "func_name":      func_name,
+                "webhook_path":   webhook_path,
+                "description":    description,
+                "workflow_name":  wf_name,
+            })
+            logger.debug("[N8N] Workflow découvert: %s → func=%s webhook=%s",
+                         wf_name, func_name, webhook_path)
+
+        self._discovery_cache = results
+        self._discovery_ts    = now
+        if results:
+            logger.info("[N8N] %d workflow(s) ADA découvert(s): %s",
+                        len(results), [r["func_name"] for r in results])
+        return results
+
+    def get_function_definitions(self) -> list[dict]:
+        """
+        Retourne les définitions de fonctions LLM pour tous les workflows ADA
+        découverts dynamiquement depuis l'API n8n.
+        Enregistre aussi leurs webhooks dans _plugin_webhooks.
+        """
+        base_url, _, _, _ = self._load_settings()
+        defs = []
+        for wf in self._discover_workflows():
+            func_name    = wf["func_name"]
+            webhook_path = wf["webhook_path"]
+            description  = wf["description"]
+
+            # Enregistrer le webhook pour dispatch direct
+            action_key = func_name.replace("_", "-")
+            self._plugin_webhooks[action_key] = f"{base_url}/{webhook_path}"
+            self._plugin_webhooks[func_name]  = f"{base_url}/{webhook_path}"
+
+            defs.append({
+                "type": "function",
+                "function": {
+                    "name":        func_name,
+                    "description": description,
+                    "parameters":  {"type": "object", "properties": {}},
+                },
+            })
+        return defs
+
+    def invalidate_discovery_cache(self) -> None:
+        """Force la redécouverte des workflows au prochain appel."""
+        self._discovery_ts = 0.0
 
     # ------------------------------------------------------------------
     # Response normalisation
@@ -156,18 +320,27 @@ class N8NExecutor:
                     "data": None}
 
         # Attempt HTTP call (outside lock — slow operation)
-        logger.info("[N8N] → POST %s params=%s", effective_url, params)
+        effective_timeout = self._effective_timeout(action, timeout_s)
+        logger.info("[N8N] → POST %s params=%s (timeout=%.0fs)", effective_url, params, effective_timeout)
         _t0 = time.monotonic()
         try:
             resp = requests.post(
                 effective_url,
                 json={"params": params},
-                timeout=timeout_s,
+                timeout=effective_timeout,
             )
             resp.raise_for_status()
             with self._lock:
                 self._mark_up()
-            result = self._normalize(resp.json())
+            # Gérer les réponses sans corps (200 vide — n8n sans nœud Respond)
+            raw_body = resp.text.strip()
+            if not raw_body:
+                result = {"success": True, "message": "Workflow exécuté avec succès.", "data": None}
+            else:
+                try:
+                    result = self._normalize(resp.json())
+                except Exception:
+                    result = {"success": True, "message": raw_body[:500], "data": None}
             _dur = int((time.monotonic() - _t0) * 1000)
             logger.info("[N8N] ← %s success=%s message=%s", action, result.get("success"), result.get("message", "")[:80])
             try:
@@ -183,9 +356,14 @@ class N8NExecutor:
         except (requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout) as exc:
             _dur = int((time.monotonic() - _t0) * 1000)
-            with self._lock:
-                self._mark_down()
-            logger.warning("[N8N] Indisponible, fallback FunctionExecutor (action=%s)", action)
+            is_timeout = isinstance(exc, requests.exceptions.Timeout)
+            # Ne marquer n8n "down" que sur ConnectionError, pas sur Timeout
+            # (un timeout = workflow lent, n8n EST joignable)
+            if not is_timeout:
+                with self._lock:
+                    self._mark_down()
+            _reason = "timeout workflow" if is_timeout else "connexion impossible"
+            logger.warning("[N8N] %s (action=%s, %.0fms)", _reason, action, _dur)
             try:
                 from web.radar.events import emit_event as _re
                 _re(type="n8n.unreachable", level="warning", module="n8n_executor",

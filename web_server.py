@@ -103,6 +103,10 @@ def main():
         help="Forcer HTTP — le micro ne fonctionnera PAS sur mobile",
     )
     parser.add_argument("--reload", action="store_true", help="Dev: rechargement auto")
+    parser.add_argument(
+        "--http-callback-port", type=int, default=7655,
+        help="Port HTTP interne pour les callbacks services (n8n, HA…). 0 = désactivé.",
+    )
     args = parser.parse_args()
 
     root = Path(__file__).parent
@@ -127,6 +131,12 @@ def main():
             print(f"  Réseau : {proto}://{ip}:{args.port}")
     print(f"  Local  : {proto}://localhost:{args.port}")
 
+    cb_port = args.http_callback_port
+    if use_ssl and cb_port:
+        for ip in sorted(ips):
+            if ip != "127.0.0.1":
+                print(f"  Callbacks n8n/HA : http://{ip}:{cb_port}  (HTTP, pas de cert requis)")
+
     if use_ssl:
         print()
         print("  ⚠  Première visite — accepter le certificat auto-signé :")
@@ -143,6 +153,20 @@ def main():
     if use_ssl:
         run_kwargs["ssl_certfile"] = str(cert_path)
         run_kwargs["ssl_keyfile"] = str(key_path)
+
+    # Démarrer le listener HTTP interne (callbacks n8n / HA) si HTTPS actif
+    if use_ssl and cb_port:
+        import threading
+        def _run_http_callback():
+            import uvicorn as _uv
+            _uv.run(
+                "web.server:app",
+                host=args.host,
+                port=cb_port,
+                log_level="warning",
+            )
+        _t = threading.Thread(target=_run_http_callback, daemon=True, name="ada-http-callback")
+        _t.start()
 
     uvicorn.run("web.server:app", **run_kwargs)
 

@@ -147,6 +147,13 @@ _ROUTES: dict[str, list[str]] = {
         "find a book", "search for a book", "do you have a book by",
         "un livre de science-fiction", "un polar", "un roman historique",
         "de la fantasy", "un essai sur", "un manga", "un bouquin",
+        # n8n workflows
+        "lance le workflow", "exécute le workflow", "déclenche le workflow",
+        "teste le workflow", "run the workflow", "trigger the workflow",
+        "test de débit", "test de debit", "test réseau", "test réseau internet",
+        "speed test", "speedtest", "test bande passante", "mesure le débit",
+        "test de vitesse internet", "teste ma connexion", "teste la connexion",
+        "bande passante", "débit internet", "vitesse internet",
     ],
 
     "qwen_thinking": [
@@ -365,7 +372,10 @@ class EmbeddingRouter:
                 return self._keyword.get_route(prompt)
             best_route, best_score = self._best_route(query_vec, cache)
             if best_score < self._threshold:
-                return "qwen_basic"
+                # Score trop faible — consulter le keyword router plutôt que
+                # retomber sur qwen_basic : permet de router les n8n workflows
+                # et autres commandes récemment ajoutées.
+                return self._keyword.get_route(prompt)
             return best_route
         except Exception as exc:
             logger.error("[SemanticRouter] unexpected error: %s", exc, exc_info=True)
@@ -407,6 +417,14 @@ _LIBRARY_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+_N8N_WORKFLOW_RE = re.compile(
+    r"\b(test\s+de\s+d[eé]bit|speed[\s\-]?test|test\s+r[eé]seau|bande\s+passante"
+    r"|d[eé]bit\s+internet|vitesse\s+internet|test\s+vitesse|test\s+connexion"
+    r"|lance[rzs]?\s+(le\s+)?workflow|ex[eé]cute[rzs]?\s+(le\s+)?workflow"
+    r"|d[eé]clenche[rzs]?\s+(le\s+)?workflow|trigger\s+workflow|run\s+workflow)\b",
+    re.IGNORECASE,
+)
+
 _VISION_KEYWORDS = re.compile(
     r"\b(regarde[rzs]?|observe[rzs]?|montre[\s-]moi|que\s+vois[\s-]tu|prends?\s+une?\s+photo"
     r"|capture\s+une?\s+image|utilise\s+la\s+cam[eé]ra|analyse\s+la\s+cam[eé]ra"
@@ -423,6 +441,9 @@ def get_route(prompt: str) -> str:
     # Vision guard first — "regarde le bureau" must not bleed into function_gemma
     if _VISION_KEYWORDS.search(prompt):
         return "vision"
+    # Fast guard pour les workflows n8n et tests réseau
+    if _N8N_WORKFLOW_RE.search(prompt):
+        return "function_gemma"
     # Fast keyword guard for music commands — beats embedding drift
     if _MUSIC_KEYWORDS.search(prompt):
         return "function_gemma"

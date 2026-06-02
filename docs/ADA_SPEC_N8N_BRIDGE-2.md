@@ -1022,3 +1022,180 @@ A-10  La rotation du token webhook invalide immédiatement l'ancien token
 ```
 
 > ADA utilise n8n comme moteur d'orchestration externe via le webhook existant et un connecteur sortant enrichi. ADA reste responsable de l'intelligence, du contexte, de l'identité des membres et de la supervision. n8n reste responsable des intégrations et des workflows visuels.
+
+---
+
+## 22. Découverte dynamique des workflows ADA depuis l'API n8n
+
+> **Implémenté dans** `core/n8n_executor.py` — méthodes `_discover_workflows()`, `get_function_definitions()`.
+
+### 22.1 Principe
+
+ADA interroge l'API REST n8n au démarrage pour lister les workflows actifs.
+Tout workflow qui satisfait la **convention de nommage ADA** est automatiquement :
+
+1. Découvert et analysé (extraction du path webhook depuis les nodes)
+2. Exposé comme **fonction LLM** dans le pipeline tool-calling
+3. Déclenché directement par `POST /webhook/<path>` quand le LLM l'appelle
+
+**Aucun fichier de configuration côté ADA n'est requis.** Il suffit de créer le workflow dans n8n.
+
+### 22.2 Convention de nommage
+
+Un workflow est pris en compte par ADA si **au moins une** des conditions est vraie :
+
+| Condition | Exemple |
+|---|---|
+| Le nom commence par `ADA` (insensible à la casse) | `ADA - Speed Test`, `ADA: Rapport hebdo` |
+| Le workflow possède le tag `ada` | tag `ada` ajouté dans n8n |
+
+Exemples de noms valides :
+
+```text
+ADA - Speed Test          ✓
+ADA : Rapport hebdo       ✓
+ADA Speed Test            ✓
+ada test debit            ✓  (tag "ada" requis si le nom ne commence pas par ADA)
+Speed Test                ✗  (ni préfixe ADA, ni tag ada)
+```
+
+### 22.3 Dérivation du nom de fonction LLM
+
+Le nom de la fonction LLM est dérivé automatiquement depuis le **path du nœud Webhook** présent dans le workflow.
+
+```text
+Webhook node path   →  Nom de fonction LLM
+ada-speed-test      →  ada_speed_test
+speed-test          →  speed_test
+rapport-hebdo       →  rapport_hebdo
+```
+
+**Règle** : le path du nœud webhook est slugifié (minuscules, caractères non-alphanumériques → tiret), puis les tirets sont remplacés par des underscores.
+
+Si le workflow ne contient aucun nœud webhook, ADA applique le slug du nom du workflow comme fallback :
+
+```text
+"ADA - Speed Test"  →  slug  →  "ada-speed-test"  →  func  "ada_speed_test"
+```
+
+### 22.4 Dérivation du path webhook
+
+Le path utilisé pour `POST /webhook/<path>` est extrait du nœud de type `n8n-nodes-base.webhook` présent dans le workflow.
+
+**Priorité** :
+1. `nodes[].parameters.path` du nœud webhook (valeur explicite dans n8n)
+2. Slug du nom du workflow (fallback si aucun nœud webhook trouvé)
+
+**Recommandation** : définir le path webhook explicitement dans le nœud n8n pour éviter le fallback. Convention recommandée :
+
+```text
+Nom du workflow       →  Path webhook recommandé
+ADA - Speed Test      →  ada-speed-test
+ADA : Rapport hebdo   →  ada-rapport-hebdo
+ADA Scan Réseau       →  ada-scan-reseau
+```
+
+### 22.5 Description LLM
+
+La description exposée au LLM pour chaque fonction est dérivée dans cet ordre de priorité :
+
+1. `meta.templateNotes` du workflow (notes de template dans n8n) — **recommandé**
+2. Fallback généré : `"Workflow n8n : <nom du workflow>. Appelle ce workflow via ADA."`
+
+**Recommandation** : renseigner les `Template notes` du workflow dans n8n avec une description claire du rôle et des paramètres attendus. Ces notes sont directement injectées dans le prompt LLM.
+
+Exemple de note efficace :
+
+```text
+Effectue un test de débit réseau (upload et download) et retourne les résultats en Mbit/s.
+Aucun paramètre requis.
+```
+
+### 22.6 Cache et rafraîchissement
+
+La découverte des workflows est mise en cache avec un TTL de **5 minutes**.
+
+```text
+Démarrage ADA       →  _discover_workflows() → appel API n8n → cache peuplé
+5 min plus tard     →  prochain appel → cache expiré → redécouverte automatique
+Nouveau workflow    →  visible dans ADA au maximum 5 min après activation dans n8n
+```
+
+Pour forcer une redécouverte immédiate sans redémarrer le serveur :
+
+```python
+from core.n8n_executor import n8n_executor
+n8n_executor.invalidate_discovery_cache()
+```
+
+### 22.7 Enregistrement des webhooks
+
+Lors de chaque découverte, les URLs de webhook sont enregistrées dans `_plugin_webhooks` sous **deux clés** pour maximiser la résolution :
+
+```text
+"ada-speed-test"  →  http://localhost:5678/webhook/ada-speed-test
+"ada_speed_test"  →  http://localhost:5678/webhook/ada-speed-test
+```
+
+Ce double enregistrement garantit que `dispatch_action()` trouve l'URL que le nom contienne des tirets ou des underscores.
+
+### 22.8 Flux complet — exemple "ADA - Speed Test"
+
+```text
+1. Dans n8n :
+   - Créer le workflow "ADA - Speed Test"
+   - Ajouter un nœud Webhook avec path = "ada-speedtest"
+   - Activer le workflow
+
+2. ADA démarre (ou 5 min s'écoulent) :
+   - GET /api/v1/workflows → retourne le workflow
+   - Filtre : nom commence par "ADA" ✓
+   - Extraction du nœud webhook → path = "ada-speedtest"
+   - func_name = "ada_speedtest"
+   - webhook enregistré : http://localhost:5678/webhook/ada-speedtest
+
+3. Utilisateur dans le chat ADA :
+   "Lance un test de débit"
+
+4. Pipeline ADA :
+   - effective_functions inclut { name: "ada_speedtest", description: "..." }
+   - LLM retourne tool_call { name: "ada_speedtest", arguments: {} }
+   - Validation : "ada_speedtest" est dans known_func_names ✓
+   - dispatch_action("ada_speedtest", {})
+   - Aucun plugin ne gère "ada_speedtest"
+   - Fallback → n8n_executor.call("ada_speedtest", {})
+   - POST http://localhost:5678/webhook/ada-speedtest {"params": {}}
+   - n8n exécute le workflow, retourne {"success": true, "message": "Download: 940 Mbit/s, Upload: 420 Mbit/s"}
+   - ADA affiche le résultat dans le chat
+```
+
+### 22.9 Prérequis côté n8n
+
+| Prérequis | Valeur |
+|---|---|
+| API REST n8n activée | Paramètres n8n → API → Enable Public API |
+| Clé API n8n | Générée dans n8n → Settings → API Keys |
+| Clé enregistrée dans ADA | `settings.json` → `n8n.api_key` |
+| URL n8n | `settings.json` → `n8n.url` (défaut : `http://localhost:5678`) |
+| Workflow actif | Le toggle "Active" doit être ON dans n8n |
+
+### 22.10 Résolution des alias LLM
+
+Le LLM peut halluciner des noms de fonctions proches des noms réels. ADA maintient une table d'alias dans `web/pipeline.py` (`_FUNC_ALIASES`) qui redirige silencieusement les variantes connues avant validation :
+
+```python
+# Exemples d'alias actifs
+"proxmox_list_nodes"   → "vm_list"
+"proxmox_nodes:list"   → "proxmox_instances_list"
+"describe_proxmox_nodes" → "proxmox_instances_list"
+"list_societes"        → "list_companies"
+```
+
+Un événement Radar `llm.function_alias_resolved` (level: info) est émis à chaque résolution d'alias.
+Si le nom halluciné n'est ni dans la table d'alias ni dans les fonctions connues, un événement `llm.hallucinated_function` (level: warning) est émis et un message d'erreur est retourné à l'utilisateur.
+
+### 22.11 Désactivation
+
+Si `n8n.api_key` est absent de la configuration, la découverte est silencieusement désactivée.
+`get_function_definitions()` retourne une liste vide, sans erreur ni avertissement bloquant.
+

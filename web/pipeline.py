@@ -737,7 +737,9 @@ async def _stream_with_tools(
     from core.n8n_executor import n8n_executor
 
     plugin_functions = _pr.combined_function_definitions()
-    effective_functions = _FUNCTIONS + plugin_functions
+    # Ajouter les workflows n8n personnalisés (config/n8n_workflows.json)
+    custom_n8n_functions = n8n_executor.get_function_definitions()
+    effective_functions = _FUNCTIONS + plugin_functions + custom_n8n_functions
 
     plugin_sys = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
     dispatcher_system = (
@@ -760,6 +762,17 @@ async def _stream_with_tools(
     )
     if plugin_sys:
         dispatcher_system += f"\n\nActive plugin capabilities:\n{plugin_sys}"
+
+    # Injecter les workflows n8n découverts dynamiquement
+    if custom_n8n_functions:
+        n8n_lines = "\n".join(
+            f"- {f['function']['name']}: {f['function']['description'][:120]}"
+            for f in custom_n8n_functions
+        )
+        dispatcher_system += (
+            f"\n\nN8N workflows disponibles — appelle-les directement par leur nom exact :\n"
+            f"{n8n_lines}"
+        )
 
     yield "\x00think\x00🔍 Sélection de l'outil…"
 
@@ -1297,8 +1310,26 @@ async def process_message(
 
     messages.append({"role": "user", "content": user_text})
 
+    # Routing dynamique n8n : si le message correspond à un workflow découvert → function_gemma
+    # (avant le semantic router qui ne connaît pas les workflows dynamiques)
+    _route_override: Optional[str] = None
     try:
-        route = semantic_route(user_text)
+        from core.n8n_executor import n8n_executor as _n8n_ex
+        import re as _re_n8n
+        _msg_kws = set(_re_n8n.findall(r'[a-zàâèéêëîïôûùüÿ]{3,}', user_text.lower()))
+        for _nd in _n8n_ex.get_function_definitions():
+            _f = _nd["function"]
+            _kw_src = (_f["name"] + " " + _f["description"]).lower().replace("_", " ")
+            _n8n_kws = set(_re_n8n.findall(r'[a-zàâèéêëîïôûùüÿ]{3,}', _kw_src))
+            if len(_n8n_kws & _msg_kws) >= 2:
+                _route_override = "function_gemma"
+                logger.debug("[Pipeline] routing n8n override → function_gemma (func=%s)", _f["name"])
+                break
+    except Exception:
+        pass
+
+    try:
+        route = _route_override or semantic_route(user_text)
     except Exception:
         route = "function_gemma"
 

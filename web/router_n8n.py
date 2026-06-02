@@ -4,14 +4,16 @@ router_n8n.py — Supervision du bridge n8n bidirectionnel (Phase 3).
 Routes :
   GET  /api/integrations/n8n/status                — état du bridge, stats, connectivité
   GET  /api/integrations/n8n/events                — liste paginée de integration_events
+  POST /api/integrations/n8n/events                — réception d'un événement inbound depuis n8n
   POST /api/integrations/n8n/events/{event_id}/retry — relance d'un événement sortant échoué
 """
 from __future__ import annotations
 
 import json
 import logging
+from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,89 @@ async def n8n_events(
         offset=offset,
     )
     return {"ok": True, "count": len(events), "offset": offset, "events": events}
+
+
+# ---------------------------------------------------------------------------
+# POST /api/integrations/n8n/events  — réception événement inbound depuis n8n
+# ---------------------------------------------------------------------------
+
+@router.post("/events")
+async def n8n_inbound_event(request: Request):
+    """
+    Reçoit un événement inbound envoyé par n8n vers ADA.
+    Stocke l'événement, émet vers Radar, et retourne 200 immédiatement.
+
+    Corps attendu (enveloppe ADA standard) :
+      { "event_id", "event_type", "source", "payload", ... }
+    """
+    try:
+        body: dict[str, Any] = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Corps JSON invalide")
+
+    event_id   = body.get("event_id",   "")
+    event_type = body.get("event_type", "unknown")
+    source     = body.get("source",     "n8n")
+    payload    = body.get("payload",    {})
+    metadata   = body.get("metadata",   {})
+
+    # Journaliser dans integration_events
+    try:
+        from core.n8n_bridge import bridge_connector
+        envelope = {
+            "event_id":        event_id or f"inbound_{event_type}",
+            "event_type":      event_type,
+            "source":          source,
+            "target":          "ada",
+            "payload":         payload,
+            "initiated_by":    source,
+            "universe":        body.get("universe", ""),
+            "correlation_id":  body.get("correlation_id", ""),
+            "idempotency_key": body.get("idempotency_key", ""),
+            "metadata":        metadata,
+        }
+        bridge_connector._store.save(envelope, direction="inbound", status="processed")
+    except Exception as exc:
+        logger.warning("[router_n8n] Impossible de journaliser l'événement inbound: %s", exc)
+
+    # Émettre vers le Radar pour visualisation
+    try:
+        from web.radar.events import emit_event as _emit
+        _emit(
+            type=f"n8n.inbound.{event_type}",
+            level="info",
+            module="router_n8n",
+            message=f"← n8n [{source}] {event_type}",
+            metadata={"event_id": event_id, "event_type": event_type,
+                      "source": source, "payload": payload, "workflow": metadata.get("workflow_name", "")},
+        )
+    except Exception as exc:
+        logger.debug("[router_n8n] Radar emit failed: %s", exc)
+
+    # Traitement spécifique par event_type
+    result_extra: dict[str, Any] = {}
+
+    if event_type == "network.speedtest_completed":
+        dl   = payload.get("download_mbps", 0)
+        qual = payload.get("quality", "?")
+        srv  = payload.get("server", "?")
+        dur  = payload.get("duration_sec", 0)
+        sz   = payload.get("test_size_mb", 0)
+        # Pousser le résultat dans la mémoire de session via Radar
+        summary = (
+            f"Speed test terminé — {dl:.1f} Mbit/s ↓ · qualité {qual} "
+            f"({sz} MB en {dur}s via {srv})"
+        )
+        try:
+            from web.radar.events import emit_event as _emit
+            _emit(type="speedtest.result", level="info", module="router_n8n",
+                  message=summary, metadata=payload)
+        except Exception:
+            pass
+        result_extra = {"summary": summary}
+        logger.info("[router_n8n] Speed test reçu : %s Mbit/s (%s)", dl, qual)
+
+    return {"ok": True, "event_id": event_id, "event_type": event_type, **result_extra}
 
 
 # ---------------------------------------------------------------------------

@@ -278,8 +278,8 @@ MODULES_ENABLED: dict = {
 
 # --- N8N Bridge ---
 N8N_BRIDGE_ENABLED           = True
-N8N_BASE_URL                 = "http://localhost:5678"
-N8N_DEFAULT_WEBHOOK_URL      = "http://localhost:5678/webhook/ada-event"
+N8N_BASE_URL                 = "http://192.168.10.172:5678"
+N8N_DEFAULT_WEBHOOK_URL      = "http://192.168.10.172:5678/webhook/ada-event"
 N8N_TIMEOUT_SECONDS          = 10
 N8N_MAX_RETRIES              = 2
 N8N_VERIFY_SSL               = True

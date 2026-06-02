@@ -1,0 +1,8 @@
+[
+  {
+    "name": "speed_test",
+    "description": "Lance un test de débit réseau (upload/download) via n8n. Utilise cette fonction quand l'utilisateur demande un test de débit, test de vitesse, speedtest, ou vérification de la bande passante.",
+    "webhook": "ada-speed-test",
+    "parameters": {}
+  }
+]
