@@ -214,6 +214,16 @@ plugin_registry = PluginRegistry()
 
 # ── Auto-registration ─────────────────────────────────────────────────────────
 
+def _radar(type: str, level: str, plugin_id: str, message: str, **meta) -> None:
+    """Émet un événement Radar pour le chargement des plugins — jamais bloquant."""
+    try:
+        from web.radar.events import emit_event
+        emit_event(type=type, level=level, module=f"plugin_registry.{plugin_id}",
+                   message=message, metadata={"plugin_id": plugin_id, **meta})
+    except Exception:
+        pass
+
+
 def register_enabled_plugins() -> None:
     """
     Enregistre les plugins dont le flag est True dans MODULES_ENABLED.
@@ -226,42 +236,29 @@ def register_enabled_plugins() -> None:
         store_val = _settings.get(f"modules.{key}")
         return store_val if store_val is not None else MODULES_ENABLED.get(key, False)
 
-    # MODULE_SOCIETE
-    if _is_enabled("societe"):
-        from core.societe.plugin import SocietePlugin
-        plugin_registry.register(SocietePlugin())
-    else:
-        print("[PluginRegistry] Module 'societe' désactivé")
+    def _load(key: str, import_path: str, class_name: str) -> None:
+        """Charge et enregistre un plugin avec capture d'erreur + Radar."""
+        if not _is_enabled(key):
+            print(f"[PluginRegistry] Module '{key}' désactivé")
+            _radar("plugin.disabled", "info", key, f"Module '{key}' désactivé")
+            return
+        try:
+            import importlib
+            mod = importlib.import_module(import_path)
+            cls = getattr(mod, class_name)
+            plugin_registry.register(cls())
+            _radar("plugin.loaded", "info", key, f"Plugin '{key}' chargé avec succès")
+        except Exception as exc:
+            import traceback
+            print(f"[PluginRegistry] ✗ Erreur chargement plugin '{key}': {exc}")
+            _radar("plugin.load_error", "error", key,
+                   f"Échec chargement plugin '{key}': {exc}",
+                   error=str(exc), traceback=traceback.format_exc()[:600])
 
-    # MODULE_DOMOTIQUE
-    if _is_enabled("domotique"):
-        from core.domotique.plugin import DomotiquePlugin
-        plugin_registry.register(DomotiquePlugin())
-    else:
-        print("[PluginRegistry] Module 'domotique' désactivé")
+    _load("societe",   "core.societe.plugin",    "SocietePlugin")
+    _load("domotique", "core.domotique.plugin",   "DomotiquePlugin")
+    _load("proxmox",   "core.infra.plugin",       "ProxmoxPlugin")
+    _load("rmm",       "core.rmm.plugin",         "RmmPlugin")
+    _load("telephony", "core.telephony.plugin",   "TelephonyPlugin")
+    _load("margepro",  "core.margepro.plugin",    "MargeProPlugin")
 
-    # MODULE_PROXMOX
-    if _is_enabled("proxmox"):
-        from core.infra.plugin import ProxmoxPlugin
-        plugin_registry.register(ProxmoxPlugin())
-    else:
-        print("[PluginRegistry] Module 'proxmox' désactivé")
-
-    # MODULE_RMM
-    if _is_enabled("rmm"):
-        from core.rmm.plugin import RmmPlugin
-        plugin_registry.register(RmmPlugin())
-    else:
-        print("[PluginRegistry] Module 'rmm' désactivé")
-
-    # MODULE_TELEPHONY
-    if _is_enabled("telephony"):
-        from core.telephony.plugin import TelephonyPlugin
-        plugin_registry.register(TelephonyPlugin())
-
-    # MODULE_MARGEPRO
-    if _is_enabled("margepro"):
-        from core.margepro.plugin import MargeProPlugin
-        plugin_registry.register(MargeProPlugin())
-    else:
-        print("[PluginRegistry] Module 'margepro' désactivé")

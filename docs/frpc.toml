@@ -1,0 +1,47 @@
+# ============================================================
+#  frp - Client (à installer sur la machine Ada, chez toi)
+# ============================================================
+
+serverAddr = "TON_VPS_IP_OU_DOMAINE"   # ex: 51.12.34.56 ou vps.mondomaine.com
+serverPort = 7000
+
+# Même token que dans frps.toml
+auth.method = "token"
+auth.token  = "CHANGE_MOI_SECRET_FORT"
+
+# Logs
+log.to    = "/var/log/frpc.log"
+log.level = "info"
+
+# ----------------------------------------------------------
+#  Tunnel principal — Interface web d'Ada
+# ----------------------------------------------------------
+[[proxies]]
+name       = "ada-web"
+type       = "tcp"
+localIP    = "127.0.0.1"
+localPort  = 8000          # ← port local d'Ada (adapter si besoin)
+remotePort = 6000          # ← port exposé sur le VPS
+# Accès depuis l'extérieur : http://TON_VPS:6000
+
+# ----------------------------------------------------------
+#  Tunnel optionnel — API Ada (si séparée)
+# ----------------------------------------------------------
+# [[proxies]]
+# name       = "ada-api"
+# type       = "tcp"
+# localIP    = "127.0.0.1"
+# localPort  = 8001
+# remotePort = 6001
+
+# ----------------------------------------------------------
+#  Tunnel optionnel — SSH vers la machine Ada
+#  (pratique pour la maintenance à distance)
+# ----------------------------------------------------------
+# [[proxies]]
+# name       = "ada-ssh"
+# type       = "tcp"
+# localIP    = "127.0.0.1"
+# localPort  = 22
+# remotePort = 6022
+# Accès : ssh -p 6022 user@TON_VPS

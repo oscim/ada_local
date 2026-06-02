@@ -98,7 +98,42 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
 
 # ---------------------------------------------------------------------------
+# Middleware Radar — remonte les erreurs HTTP 4xx/5xx API vers le store Radar
+# ---------------------------------------------------------------------------
+class _RadarErrorMiddleware(BaseHTTPMiddleware):
+    """Émet un événement Radar pour toute réponse API ≥ 400 (hors 401 statiques)."""
+
+    _SKIP_PATHS = frozenset({"/api/status", "/api/auth/qr/status"})
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        status = response.status_code
+        # On ne logue que les routes /api/ avec un statut ≥ 400
+        if path.startswith("/api/") and status >= 400 and path not in self._SKIP_PATHS:
+            try:
+                from web.radar.events import emit_event as _re
+                _level = "error" if status >= 500 else "warning"
+                _re(
+                    type=f"http.{status}",
+                    level=_level,
+                    module="web.server",
+                    message=f"HTTP {status} — {request.method} {path}",
+                    metadata={
+                        "method": request.method,
+                        "path": path,
+                        "status": status,
+                        "query": str(request.url.query)[:200] if request.url.query else None,
+                    },
+                )
+            except Exception:
+                pass
+        return response
+
+
+# ---------------------------------------------------------------------------
 app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
+app.add_middleware(_RadarErrorMiddleware)
 app.add_middleware(_AuthMiddleware)
 app.include_router(_auth_router)
 app.include_router(_profiles_router)
@@ -116,6 +151,11 @@ app.include_router(_plugins_router)
 # Webhooks entrants — Domoticz, n8n, Home Assistant, etc.
 from web.router_webhook import router as _webhook_router
 app.include_router(_webhook_router)
+
+# N8N Bridge — routes de supervision (guard MODULES_ENABLED["n8n_bridge"])
+if _MODULES_ENABLED.get("n8n_bridge", False):
+    from web.router_n8n import router as _n8n_router
+    app.include_router(_n8n_router)
 
 # routes_infra : Proxmox/PBS multi-instance — toujours monté, guard interne
 from web.routes_infra import router as _infra_router
@@ -248,8 +288,16 @@ async def chat(req: ChatRequest):
     Chaque event : data: {"text": "..."}\n\n
     Fin           : data: [DONE]\n\n
     """
+    import re as _re
+    # Détecte les réponses JSON de contrôle internes (autoskill format)
+    _JSON_CTL = _re.compile(r'^\s*\{\s*\n?\s*"action"\s*:')
+    _CTL_THRESH = 50  # chars avant de décider
+
     async def _sse():
         try:
+            buf = ""
+            mode = "buffering"  # buffering | normal | suppress
+
             async for chunk in process_message(
                 req.message,
                 req.history,
@@ -257,17 +305,39 @@ async def chat(req: ChatRequest):
                 plugin_context=req.plugin_context,
                 context_id=req.context_id,
             ):
+                # Chunks spéciaux : pass-through ou silence selon mode
                 if chunk.startswith('\x00img\x00'):
-                    img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
-                    yield f"data: {json.dumps({'img_url': img_url})}\n\n"
+                    if mode != "suppress":
+                        yield f"data: {json.dumps({'img_url': chunk[5:]})}\n\n"
+                    continue
                 elif chunk.startswith('\x00think\x00'):
-                    think_text = chunk[7:]  # \x00think\x00 = 7 chars
-                    yield f"data: {json.dumps({'thinking': think_text})}\n\n"
+                    if mode != "suppress":
+                        yield f"data: {json.dumps({'thinking': chunk[7:]})}\n\n"
+                    continue
                 elif chunk.startswith('{"__type"'):
-                    # Carte de confirmation — envoyer directement sans double-wrapping
-                    yield f"data: {chunk}\n\n"
-                else:
+                    if mode != "suppress":
+                        yield f"data: {chunk}\n\n"
+                    continue
+
+                if mode == "buffering":
+                    buf += chunk
+                    if len(buf) >= _CTL_THRESH:
+                        if _JSON_CTL.match(buf):
+                            mode = "suppress"  # JSON de contrôle interne — masquer
+                        else:
+                            mode = "normal"
+                            yield f"data: {json.dumps({'text': buf})}\n\n"
+                            buf = ""
+                elif mode == "normal":
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
+                # suppress : consommer sans diffuser
+
+            # Vider le buffer restant
+            if buf:
+                if mode == "buffering" and not _JSON_CTL.match(buf):
+                    yield f"data: {json.dumps({'text': buf})}\n\n"
+                # mode suppress ou JSON détecté : ne rien envoyer
+
         except Exception as exc:
             yield f"data: {json.dumps({'error': str(exc)})}\n\n"
         finally:
@@ -329,6 +399,7 @@ async def dashboard():
     import httpx
     import psutil
     from config import OLLAMA_URL, RESPONDER_MODEL
+    from core.settings_store import settings as _s
 
     base = OLLAMA_URL.rstrip("/")
     if base.endswith("/api"):
@@ -370,7 +441,8 @@ async def dashboard():
 
     return {
         "ollama": "online" if ollama_ok else "offline",
-        "model": RESPONDER_MODEL,
+        "model": _s.get("models.chat", RESPONDER_MODEL),
+        "embed_model": _s.get("semantic_router.embedding_model", "nomic-embed-text"),
         "loaded_models": loaded_models,
         "cpu_pct": round(cpu, 1),
         "ram": {

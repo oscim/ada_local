@@ -45,6 +45,60 @@ function _bubble(role, content = '') {
   return d;
 }
 
+// ── Markdown / blocs de code copiables ──────────────────────────
+function _escHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function _processText(str) {
+  const parts = [];
+  let last = 0;
+  for (const m of str.matchAll(/`([^`\n]+)`/g)) {
+    parts.push({ type: 'txt', val: str.slice(last, m.index) });
+    parts.push({ type: 'code', val: m[1] });
+    last = m.index + m[0].length;
+  }
+  parts.push({ type: 'txt', val: str.slice(last) });
+  return parts.map(p =>
+    p.type === 'code'
+      ? `<code class="inline-code">${_escHtml(p.val)}</code>`
+      : _escHtml(p.val).replace(/\n/g, '<br>')
+  ).join('');
+}
+
+const _COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+
+function _renderMarkdown(raw) {
+  let html = '';
+  let last = 0;
+  for (const m of raw.matchAll(/```([\w-]*)\n?([\s\S]*?)```/g)) {
+    html += _processText(raw.slice(last, m.index));
+    const lang = m[1] || '';
+    const code = m[2].replace(/\n$/, '');
+    const langLabel = lang
+      ? `<span class="code-lang">${_escHtml(lang)}</span>`
+      : '<span class="code-lang"></span>';
+    html += `<div class="code-block"><div class="code-header">${langLabel}<button class="copy-btn" title="Copier le code">${_COPY_ICON}</button></div><pre><code>${_escHtml(code)}</code></pre></div>`;
+    last = m.index + m[0].length;
+  }
+  html += _processText(raw.slice(last));
+  return html;
+}
+
+function _attachCopyButtons(el) {
+  el.querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const code = btn.closest('.code-block').querySelector('code').textContent;
+      try { await navigator.clipboard.writeText(code); } catch {
+        const ta = Object.assign(document.createElement('textarea'), { value: code });
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+      }
+      btn.innerHTML = '✓ Copié'; btn.classList.add('copied');
+      setTimeout(() => { btn.innerHTML = _COPY_ICON; btn.classList.remove('copied'); }, 2000);
+    });
+  });
+}
+
 // ── Textarea auto-resize ────────────────────────────────────────
 function _resize() {
   _textInput.style.height = 'auto';
@@ -118,7 +172,15 @@ export async function sendMessage(text) {
           }
           if (obj.text) {
             if (!ada) { ada = _bubble('ada', ''); ada.classList.add('streaming'); }
-            acc += obj.text; ada.textContent = acc; _messages.scrollTop = _messages.scrollHeight;
+            acc += obj.text;
+            // Rendu temps réel : dès qu'un backtick est détecté, on rend le markdown
+            if (acc.includes('`')) {
+              ada.innerHTML = _renderMarkdown(acc);
+              ada.dataset.md = '1';
+            } else {
+              ada.textContent = acc;
+            }
+            _messages.scrollTop = _messages.scrollHeight;
           }
         } catch { /* ignore */ }
       }
@@ -131,6 +193,10 @@ export async function sendMessage(text) {
     if (ada) {
       ada.classList.remove('streaming');
       if (acc) {
+        // Rendu final + boutons copier
+        ada.innerHTML = _renderMarkdown(acc);
+        ada.dataset.md = '1';
+        _attachCopyButtons(ada);
         _history.push({ role: 'assistant', content: acc });
         _speakIfEnabled(acc);
       }

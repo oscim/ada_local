@@ -1,0 +1,20 @@
+# ============================================================
+#  frp - Serveur (à installer sur ton VPS)
+# ============================================================
+
+bindPort = 7000          # port d'écoute pour les clients frp (côté Ada)
+# bindAddr = "0.0.0.0"  # décommenter pour forcer l'écoute sur toutes les interfaces
+
+# Authentification — change cette valeur et mets la même dans frpc.toml
+auth.method = "token"
+auth.token  = "CHANGE_MOI_SECRET_FORT"
+
+# Dashboard web (optionnel, pour surveiller les tunnels actifs)
+webServer.addr = "0.0.0.0"
+webServer.port = 7500
+webServer.user = "admin"
+webServer.password = "CHANGE_MOI_DASHBOARD"
+
+# Logs
+log.to    = "/var/log/frps.log"
+log.level = "info"

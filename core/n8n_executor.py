@@ -157,6 +157,7 @@ class N8NExecutor:
 
         # Attempt HTTP call (outside lock — slow operation)
         logger.info("[N8N] → POST %s params=%s", effective_url, params)
+        _t0 = time.monotonic()
         try:
             resp = requests.post(
                 effective_url,
@@ -167,21 +168,49 @@ class N8NExecutor:
             with self._lock:
                 self._mark_up()
             result = self._normalize(resp.json())
+            _dur = int((time.monotonic() - _t0) * 1000)
             logger.info("[N8N] ← %s success=%s message=%s", action, result.get("success"), result.get("message", "")[:80])
+            try:
+                from web.radar.events import emit_event as _re
+                _re(type="n8n.call.success", level="info", module="n8n_executor",
+                    message=f"n8n ← {action} success={result.get('success')}",
+                    duration_ms=_dur,
+                    metadata={"action": action, "url": effective_url, "success": result.get("success")})
+            except Exception:
+                pass
             return result
 
         except (requests.exceptions.ConnectionError,
-                requests.exceptions.Timeout):
+                requests.exceptions.Timeout) as exc:
+            _dur = int((time.monotonic() - _t0) * 1000)
             with self._lock:
                 self._mark_down()
             logger.warning("[N8N] Indisponible, fallback FunctionExecutor (action=%s)", action)
+            try:
+                from web.radar.events import emit_event as _re
+                _re(type="n8n.unreachable", level="warning", module="n8n_executor",
+                    message=f"n8n injoignable — action={action} ({type(exc).__name__})",
+                    duration_ms=_dur,
+                    metadata={"action": action, "url": effective_url, "error": str(exc)[:200]})
+            except Exception:
+                pass
             if fallback_enabled:
                 return self._fallback(action, params)
             return {"success": False, "message": "n8n indisponible", "data": None}
 
         except requests.exceptions.HTTPError as exc:
             status = exc.response.status_code if exc.response is not None else 0
+            _dur = int((time.monotonic() - _t0) * 1000)
             logger.error("[N8N] HTTP %d pour action=%s", status, action)
+            try:
+                from web.radar.events import emit_event as _re
+                _level = "error" if status >= 500 else "warning"
+                _re(type="n8n.http_error", level=_level, module="n8n_executor",
+                    message=f"n8n HTTP {status} — action={action}",
+                    duration_ms=_dur,
+                    metadata={"action": action, "url": effective_url, "status": status})
+            except Exception:
+                pass
             # Only 5xx server errors indicate n8n is down — 4xx are client-side errors
             if status >= 500:
                 with self._lock:
@@ -192,6 +221,14 @@ class N8NExecutor:
 
         except Exception as exc:
             logger.error("[N8N] Erreur inattendue (action=%s): %s", action, exc)
+            try:
+                from web.radar.events import emit_event as _re
+                _re(type="n8n.unexpected_error", level="error", module="n8n_executor",
+                    message=f"n8n erreur inattendue — action={action}: {exc}",
+                    metadata={"action": action, "error": str(exc)[:300]},
+                    exception=exc)
+            except Exception:
+                pass
             return {"success": False, "message": str(exc), "data": None}
 
 

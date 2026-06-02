@@ -265,14 +265,29 @@ FUNCTIONS = [
 
 # MODULE_SOCIETE: feature flag — mettre à False pour désactiver entièrement le module
 MODULES_ENABLED: dict = {
-    "societe":    True,
-    "domotique":  True,    # → DomotiquePlugin (univers: home)
-    "proxmox":    True,    # → ProxmoxPlugin (univers: opent)
-    "rmm":        True,    # → RmmPlugin (univers: opent)
-    "telephony":  False,   # → TelephonyPlugin (off par défaut)
-    "margepro":   True,    # → MargeProPlugin (univers: margep)
-    "music":      False,   # → module Musique (off par défaut)
+    "societe":      True,
+    "domotique":    True,    # → DomotiquePlugin (univers: home)
+    "proxmox":      True,    # → ProxmoxPlugin (univers: opent)
+    "rmm":          True,    # → RmmPlugin (univers: opent)
+    "telephony":    False,   # → TelephonyPlugin (off par défaut)
+    "margepro":     True,    # → MargeProPlugin (univers: margep)
+    "music":        False,   # → module Musique (off par défaut)
+    "n8n_bridge":   True,    # → Connecteur n8n sortant (events + fallback)
+    "n8n_fallback": True,    # → Pipeline fallback automatique vers n8n
 }
+
+# --- N8N Bridge ---
+N8N_BRIDGE_ENABLED           = True
+N8N_BASE_URL                 = "http://localhost:5678"
+N8N_DEFAULT_WEBHOOK_URL      = "http://localhost:5678/webhook/ada-event"
+N8N_TIMEOUT_SECONDS          = 10
+N8N_MAX_RETRIES              = 2
+N8N_VERIFY_SSL               = True
+N8N_FALLBACK_ENABLED         = True
+N8N_ALLOWED_EVENT_DOMAINS: list = [
+    "domotic", "marketing", "social", "lead", "crm",
+    "support", "content", "notification", "workflow", "system",
+]
 
 # --- Console Colors ---
 GRAY = "\033[90m"

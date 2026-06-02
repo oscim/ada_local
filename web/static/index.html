@@ -566,6 +566,15 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;color:var(--text-dim);
   background:var(--surface2);border:1px solid var(--border);padding:2px 7px;border-radius:4px;
 }
+.chat-model-sel{
+  margin-left:auto;font-family:'DM Mono',monospace;font-size:9px;color:var(--text-dim);
+  background:var(--surface2);border:1px solid var(--border);padding:2px 6px;border-radius:4px;
+  appearance:none;-webkit-appearance:none;cursor:pointer;outline:none;
+  max-width:110px;overflow:hidden;text-overflow:ellipsis;
+  transition:border-color .15s,color .15s;
+}
+.chat-model-sel:hover,.chat-model-sel:focus{border-color:var(--accent);color:var(--text);}
+.chat-model-sel option{background:var(--surface2);color:var(--text);}
 .chat-expand-btn{
   display:flex;align-items:center;justify-content:center;
   background:none;border:1px solid var(--border);border-radius:5px;
@@ -781,7 +790,7 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
   </div>
 
   <div class="tb-status">
-    <div class="status-pill" id="pill-llm"><div class="s-dot dot-g pulse"></div>LLM <b>Mistral</b></div>
+    <div class="status-pill" id="pill-llm"><div class="s-dot dot-g pulse"></div>LLM <b id="v-llm-chat">…</b><span id="v-llm-embed" style="font-family:'DM Mono',monospace;font-size:.8em;opacity:.55;margin-left:3px">· embed</span></div>
     <div class="status-pill sys-pill" id="pill-cpu">CPU <b id="val-cpu">…</b></div>
     <div class="status-pill sys-pill" id="pill-ram">RAM <b id="val-ram">…</b></div>
     <div class="status-pill sys-pill" id="pill-gpu">GPU <b id="val-gpu">—</b></div>
@@ -1357,6 +1366,7 @@ async function _onAuthenticated(){
   _activeDomain=_dashCtx?_dashCtx.domain:null;
   await _loadProfile();
   await _loadStatus();
+  _initChatModelSel();
   _loadSubView('uni-dash-content','dashboard');
   _renderPluginCtxBar('dash');
 }
@@ -1475,14 +1485,19 @@ async function _loadStatus(){
       fetch('/api/status',{headers:h}).then(r=>r.json()).catch(()=>({})),
       fetch('/api/dashboard',{headers:h}).then(r=>r.json()).catch(()=>null),
     ]);
-    // LLM pill
+    // LLM pill — modèle chat + modèle embed depuis /api/dashboard
     const llmPill=document.getElementById('pill-llm');
-    if(llmPill){
+    if(llmPill && d){
       const dot=llmPill.querySelector('.s-dot');
-      const b=llmPill.querySelector('b');
-      const ok=st.ollama==='online';
+      const ok=st.ollama==='online'||d.ollama==='online';
       if(dot){dot.className='s-dot '+(ok?'dot-g pulse':'dot-r');}
-      if(b){b.textContent=ok?(st.model||'Mistral').replace(':latest',''):'Offline';}
+      const vChat=document.getElementById('v-llm-chat');
+      const vEmbed=document.getElementById('v-llm-embed');
+      if(vChat){vChat.textContent=ok?(d.model||'LLM').replace(':latest',''):'Offline';}
+      if(vEmbed){
+        const em=(d.embed_model||'').replace(':latest','');
+        vEmbed.textContent=em?'· '+em:'';
+      }
     }
     // Métriques système
     if(d){
@@ -1711,6 +1726,45 @@ function toggleMic(){
 
 // Initialiser les boutons au chargement
 document.addEventListener('DOMContentLoaded', () => { _updateTtsBtn(); _initSTT(); });
+
+// ── Select modèle LLM dans le chat header ────────────────────────
+async function _initChatModelSel(){
+  const sel=document.getElementById('chat-model-sel');
+  if(!sel)return;
+  const token=_getToken();
+  const h=token?{'Authorization':'Bearer '+token}:{};
+  try{
+    const [models,cfg]=await Promise.all([
+      fetch('/api/ollama/models',{headers:h}).then(r=>r.json()).catch(()=>[]),
+      fetch('/api/settings',{headers:h}).then(r=>r.json()).catch(()=>({}))
+    ]);
+    const current=(cfg.models?.chat||'mistral:latest');
+    const list=Array.isArray(models)?models:[];
+    sel.innerHTML='';
+    if(!list.includes(current)){
+      const o=document.createElement('option');
+      o.value=current;o.textContent=current.replace(':latest','');o.selected=true;
+      sel.appendChild(o);
+    }
+    list.forEach(m=>{
+      const o=document.createElement('option');
+      o.value=m;o.textContent=m.replace(':latest','');
+      if(m===current)o.selected=true;
+      sel.appendChild(o);
+    });
+    // Sync topbar
+    const b=document.getElementById('v-llm-chat');
+    if(b)b.textContent=current.replace(':latest','');
+  }catch{}
+  sel.onchange=async()=>{
+    const model=sel.value;
+    const tok=_getToken();
+    const hd=tok?{'Authorization':'Bearer '+tok,'Content-Type':'application/json'}:{'Content-Type':'application/json'};
+    await fetch('/api/settings',{method:'POST',headers:hd,body:JSON.stringify({key:'models.chat',value:model})}).catch(()=>{});
+    const b=document.getElementById('v-llm-chat');
+    if(b)b.textContent=model.replace(':latest','');
+  };
+}
 
 // ── Clock ──────────────────────────────────────────────────────
 function tick(){

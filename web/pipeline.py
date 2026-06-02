@@ -821,6 +821,64 @@ async def _stream_with_tools(
         func_name = call.get("function", {}).get("name", "")
         params = call.get("function", {}).get("arguments", {}) or {}
 
+    # ── Alias : noms hallucinés → noms réels ─────────────────────────────────
+    # Quand le LLM invente un nom de fonction, on le redirige silencieusement
+    _FUNC_ALIASES: dict[str, str] = {
+        # Proxmox
+        "proxmox_list_nodes":   "vm_list",
+        "proxmox_list_vms":     "vm_list",
+        "list_nodes":           "vm_list",
+        "list_vms":             "vm_list",
+        "vm_status":            "vm_list",
+        "proxmox_vm_list":      "vm_list",
+        "proxmox_node_list":      "proxmox_instances_list",
+        "list_proxmox":           "proxmox_instances_list",
+        "describe_proxmox_nodes": "proxmox_instances_list",
+        "describe_proxmox":       "proxmox_instances_list",
+        "proxmox_nodes":          "proxmox_instances_list",
+        "proxmox_describe_nodes": "proxmox_instances_list",
+        "count_proxmox_nodes":    "proxmox_instances_list",
+        "get_proxmox_nodes":      "proxmox_instances_list",
+        # Sociétés
+        "list_societes":        "list_companies",
+        "get_societes":         "list_companies",
+        "societe_list":         "list_companies",
+        # Domotique
+        "list_lights":          "device_status",
+        "get_devices":          "device_status",
+        # RMM
+        "rmm_list_alerts":      "rmm_alerts_list",
+        "rmm_status":           "rmm_alerts_list",
+    }
+    if func_name in _FUNC_ALIASES:
+        resolved = _FUNC_ALIASES[func_name]
+        try:
+            from web.radar.events import emit_event as _re
+            _re(type="llm.function_alias_resolved", level="info", module="web.pipeline",
+                message=f"Alias '{func_name}' → '{resolved}'",
+                metadata={"original": func_name, "resolved": resolved})
+        except Exception:
+            pass
+        func_name = resolved
+
+    # ── Validation : le nom de fonction doit exister dans les définitions ─────
+    known_func_names = {f["function"]["name"] for f in effective_functions}
+    if func_name and func_name not in known_func_names:
+        try:
+            from web.radar.events import emit_event as _re
+            _re(type="llm.hallucinated_function", level="warning", module="web.pipeline",
+                message=f"LLM a appelé une fonction inconnue : '{func_name}'",
+                metadata={"func_name": func_name, "params": str(params)[:200],
+                          "known": sorted(known_func_names)})
+        except Exception:
+            pass
+        # Chercher un proche candidat (même préfixe)
+        prefix = func_name.split("_")[0]
+        candidates = sorted(n for n in known_func_names if n.startswith(prefix))
+        hint = f" Fonctions disponibles : `{'`, `'.join(candidates)}`." if candidates else ""
+        yield f"⚠️ Fonction `{func_name}` inconnue.{hint}"
+        return
+
     if func_name == "passthrough":
         thinking = bool(params.get("thinking", False))
         async for chunk in _stream_ollama(conversation_messages, thinking=thinking):
@@ -864,6 +922,27 @@ async def _stream_with_tools(
     else:
         action = func_name.replace("_", "-")
         result = n8n_executor.call(action, params)
+
+    # ── N8N Bridge fallback (si local échoue et n8n_bridge actif) ─────────────
+    if not result.get("success"):
+        try:
+            from config import MODULES_ENABLED as _mods
+            if _mods.get("n8n_bridge", False) and _mods.get("n8n_fallback", False):
+                from core.n8n_bridge import bridge_connector as _bridge
+                yield "\x00think\x00🔄 Délégation n8n…"
+                br = _bridge.send_fallback(
+                    original_function=func_name,
+                    original_params=params,
+                    failure_reason=result.get("message", "executor_failed"),
+                    user_message=text,
+                    universe=plugin_context_id,
+                )
+                if br.get("ok") and br.get("reply"):
+                    yield "\x00think\x00✅ Réponse n8n reçue"
+                    yield br["reply"]
+                    return
+        except Exception:
+            pass  # n8n ne bloque jamais le pipeline
 
     success    = result.get("success", False)
     result_msg = result.get("message", "")

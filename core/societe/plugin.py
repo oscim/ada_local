@@ -149,3 +149,102 @@ class SocietePlugin(BasePlugin):
             f"Liste les derniers documents de {company.name}",
             f"Y a-t-il des alertes pour {company.name} ?",
         ]
+
+    # ── System prompt injection ───────────────────────────────────────────────
+
+    def get_system_prompt_injection(self, context_id: str | None = None) -> str:
+        """
+        # MODULE_SOCIETE: injecte le contexte société dans le system prompt LLM.
+        Délègue à get_chat_context() pour réutiliser la logique existante.
+        """
+        return self.get_chat_context(company_id=context_id)
+
+    # ── Function definitions (tool-calling) ───────────────────────────────────
+
+    def get_function_definitions(self) -> list[dict]:
+        """
+        # MODULE_SOCIETE: fonctions exposées au LLM via tool-calling Ollama.
+        """
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_companies",
+                    "description": "Liste toutes les sociétés configurées dans ADA avec leurs informations principales.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "description": "Filtrer par statut : 'active', 'inactive', ou 'all' (défaut: 'all')",
+                                "enum": ["active", "inactive", "all"],
+                            }
+                        },
+                        "required": [],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_company_details",
+                    "description": "Retourne les détails complets d'une société (KPIs, timeline, contacts).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_name": {
+                                "type": "string",
+                                "description": "Nom de la société (ou partie du nom)",
+                            }
+                        },
+                        "required": ["company_name"],
+                    },
+                },
+            },
+        ]
+
+    # ── Action handler ────────────────────────────────────────────────────────
+
+    def handle_action(self, action: str, params: dict) -> dict:
+        """
+        # MODULE_SOCIETE: exécution locale des actions societe.
+        """
+        if action == "list_companies":
+            return self._action_list_companies(params)
+        if action == "get_company_details":
+            return self._action_get_company_details(params)
+        return {"success": False, "message": f"Action '{action}' non reconnue par SocietePlugin", "data": None}
+
+    def _action_list_companies(self, params: dict) -> dict:
+        status_filter = params.get("status", "all")
+        try:
+            if status_filter == "all":
+                companies = company_model.list_companies()
+            else:
+                companies = company_model.list_companies(status=status_filter)
+            if not companies:
+                return {"success": True, "message": "Aucune société configurée.", "data": []}
+            lines = ["**Sociétés configurées :**\n"]
+            for c in companies:
+                status_label = "✅ active" if c.status == "active" else "⏸ inactive"
+                line = f"- **{c.name}** ({status_label})"
+                if c.type:
+                    line += f" — {c.type}"
+                lines.append(line)
+            return {"success": True, "message": "\n".join(lines), "data": [c.name for c in companies]}
+        except Exception as exc:
+            return {"success": False, "message": f"Erreur lecture sociétés : {exc}", "data": None}
+
+    def _action_get_company_details(self, params: dict) -> dict:
+        name_query = (params.get("company_name") or "").lower().strip()
+        try:
+            all_companies = company_model.list_companies()
+            match = next((c for c in all_companies if name_query in c.name.lower()), None)
+            if not match:
+                names = ", ".join(c.name for c in all_companies)
+                return {"success": False, "message": f"Société '{params.get('company_name')}' introuvable. Sociétés disponibles : {names}", "data": None}
+            ctx = self.get_chat_context(company_id=match.id)
+            return {"success": True, "message": ctx, "data": {"id": match.id, "name": match.name}}
+        except Exception as exc:
+            return {"success": False, "message": f"Erreur : {exc}", "data": None}
+

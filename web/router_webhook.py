@@ -144,7 +144,7 @@ async def receive_webhook(source: str, request: Request):
 
     # Mode événement pur (pas de champ texte)
     _text_keys = {"text", "message", "query", "queryText"}
-    if "event" in payload and not _text_keys.intersection(payload):
+    if ("event" in payload or "event_type" in payload) and not _text_keys.intersection(payload):
         return await _handle_event(source, payload)
 
     # Mode intent texte → pipeline ADA
@@ -224,15 +224,99 @@ async def _handle_action(source: str, payload: dict) -> JSONResponse:
 
 
 async def _handle_event(source: str, payload: dict) -> JSONResponse:
-    """Enregistre un événement entrant dans le Radar (fire & forget)."""
-    event_type = str(payload.get("event", "webhook.event"))
+    """
+    Enregistre un événement entrant.
+
+    - Si le payload contient un champ idempotency_key déjà traité → réponse duplicate.
+    - Si event_type suit la convention 'domaine.action' et que n8n_bridge est actif
+      → routage via N8nEventRouter + journalisation integration_events.
+    - Sinon → Radar fire & forget (comportement original).
+    """
+    event_type      = str(payload.get("event_type") or payload.get("event", "webhook.event"))
+    idempotency_key = str(payload.get("idempotency_key", "")).strip()
+
+    # ── Idempotence ──────────────────────────────────────────────────────────
+    if idempotency_key:
+        try:
+            from core.n8n_bridge import bridge_connector
+            if bridge_connector._store.is_duplicate(idempotency_key):
+                try:
+                    from web.radar.events import emit_event
+                    emit_event(
+                        type="n8n_event_duplicate",
+                        level="info",
+                        module=f"webhook.{source}",
+                        metadata={"idempotency_key": idempotency_key, "event_type": event_type},
+                    )
+                except Exception:
+                    pass
+                logger.info("[Webhook] Duplicate ignoré — key=%s source=%s", idempotency_key, source)
+                return JSONResponse({
+                    "ok": True, "source": source, "event": event_type,
+                    "queued": False, "duplicate": True,
+                })
+        except Exception:
+            pass
+
+    # ── Routage structuré (convention domaine.action) ────────────────────────
+    if "." in event_type:
+        try:
+            from config import MODULES_ENABLED as _mods
+            if _mods.get("n8n_bridge", False):
+                from core.n8n_bridge import event_validator, event_router
+                ok, err = event_validator.validate(payload)
+                if not ok:
+                    try:
+                        from web.radar.events import emit_event
+                        emit_event(
+                            type="n8n_event_rejected",
+                            level="warn",
+                            module=f"webhook.{source}",
+                            metadata={"reason": err, "event_type": event_type},
+                        )
+                    except Exception:
+                        pass
+                    return JSONResponse({"ok": False, "detail": err, "rejected": True}, status_code=422)
+
+                # Enrichir le payload avec source et event_type normalisé
+                routable = dict(payload)
+                routable.setdefault("event_type", event_type)
+                routable.setdefault("source",     source)
+                result = event_router.route(routable)
+                try:
+                    from web.radar.events import emit_event
+                    emit_event(
+                        type="n8n_event_received",
+                        level="info",
+                        module=f"webhook.{source}",
+                        metadata={
+                            "event_type": event_type,
+                            "domain":     result.get("domain", ""),
+                            "action":     result.get("action", ""),
+                        },
+                    )
+                except Exception:
+                    pass
+                return JSONResponse({
+                    "ok":     True,
+                    "source": source,
+                    "event":  event_type,
+                    "domain": result.get("domain"),
+                    "status": result.get("status", "processed"),
+                    "queued": False,
+                })
+        except Exception as exc:
+            logger.error("[Webhook] N8nEventRouter error : %s", exc, exc_info=True)
+            # Fallback : traitement classique Radar
+
+    # ── Radar fire & forget (comportement original) ──────────────────────────
     try:
         from web.radar.events import emit_event
         emit_event(
             type=f"webhook.{event_type}",
             level="info",
             module=f"webhook.{source}",
-            metadata={k: v for k, v in payload.items() if k not in ("event", "token", "secret")},
+            metadata={k: v for k, v in payload.items() if k not in ("event", "event_type", "token", "secret")},
         )
     except Exception:
         pass  # emit_event ne doit jamais planter l'appelant

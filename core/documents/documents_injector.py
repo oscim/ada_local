@@ -45,13 +45,20 @@ def inject_documentation(
     total_chars = 0
     sources: list[str] = []
 
+    # Préfixes des fichiers specs/dev à exclure du contexte utilisateur
+    _SPEC_PREFIXES = ("docs/SPEC_", "docs/spec_", "docs/ADA_", "docs/PROMPT_", "docs/prompt_")
+
     for chunk in results:
+        rel_path = chunk.get("rel_path", "")
+        # Exclure les specs développeur — elles contiennent des instructions JSON internes
+        if any(rel_path.startswith(p) for p in _SPEC_PREFIXES):
+            continue
         heading = chunk.get("heading", "")
         content = chunk.get("content", "")
         rel_path = chunk.get("rel_path", "")
         title = chunk.get("title", rel_path)
 
-        header = f"### {heading}" if heading else f"### {title}"
+        header = heading if heading else f"### {title}"
         block = f"{header}\n{content}\n(source: {rel_path})"
 
         if total_chars + len(block) > max_chars:

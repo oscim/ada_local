@@ -23,6 +23,82 @@
   animation: fadeIn .15s ease;
 }
 
+/* Les bulles ADA rendues en HTML n'utilisent pas pre-wrap */
+.msg.ada[data-md="1"] { white-space: normal; }
+
+/* ── Blocs de code ───────────────────────────────────────────── */
+.msg.ada .code-block {
+  margin: 8px 0;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface3, #1a2028);
+  border: 1px solid var(--border-hi);
+  font-family: 'DM Mono', monospace;
+}
+.msg.ada .code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid var(--border);
+  min-height: 28px;
+}
+.msg.ada .code-lang {
+  font-size: .75rem;
+  color: var(--text-mid);
+  font-family: 'DM Mono', monospace;
+  text-transform: lowercase;
+}
+.msg.ada pre {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.msg.ada pre code {
+  font-family: 'DM Mono', monospace;
+  font-size: .82rem;
+  line-height: 1.65;
+  color: var(--text);
+  background: none;
+  padding: 0;
+}
+.msg.ada .inline-code {
+  background: var(--surface3, #1a2028);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: 'DM Mono', monospace;
+  font-size: .87em;
+  color: var(--accent);
+}
+
+/* ── Bouton copier ───────────────────────────────────────────── */
+.copy-btn {
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: .72rem;
+  font-family: 'DM Sans', sans-serif;
+  transition: color .15s, background .15s, border-color .15s;
+  line-height: 1.4;
+}
+.copy-btn:hover {
+  color: var(--accent);
+  background: var(--glow);
+  border-color: var(--accent);
+}
+.copy-btn.copied {
+  color: var(--green);
+  border-color: var(--green);
+}
+
 @keyframes fadeIn { from { opacity:0; transform: translateY(4px); } to { opacity:1; } }
 
 .msg.user { align-self: flex-end;   background: var(--user-bg); border-bottom-right-radius: 4px; }
