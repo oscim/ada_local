@@ -1,0 +1,182 @@
+{
+  "name": "ADA — Timer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ada-timer",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "b3295832-bace-4a4f-b231-c572b5fa4ac3",
+      "name": "Webhook ADA",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        784
+      ],
+      "webhookId": "9c756eda-2682-4e52-8a89-cda20769de55"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\n// n8n emballe le POST body dans .body ; n8n_executor envoie {params: {...}}\n// donc la vraie structure est: raw.body.params.delay_minutes\nlet body = raw.body || raw;\nif (body.params) body = body.params;\nconst delay = parseInt(body.delay_minutes) || 1;\nreturn [{ json: { delay_minutes: delay, label: body.label || 'Timer', message: body.message || '', context: body.context || null } }];"
+      },
+      "id": "82f00a23-44e2-41f9-87e9-060913d16654",
+      "name": "Extraire paramètres",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ \"ok\": true, \"message\": \"Timer démarré\", \"delay_minutes\": ($input.first().json.delay_minutes || 1), \"label\": ($input.first().json.label || \"Timer\") }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "bc713b21-dd8a-4dae-822e-09ae093cce75",
+      "name": "Répondre à ADA",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2144,
+        1056
+      ]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.delay_minutes }}",
+        "unit": "minutes"
+      },
+      "id": "4673278e-b14c-42d7-8470-b4b4a607cff8",
+      "name": "Attendre",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2288,
+        784
+      ],
+      "webhookId": "0dd7a7b7-2651-4c29-b5c2-cf411db47531"
+    },
+    {
+      "parameters": {
+        "jsCode": "const params = $('Extraire paramètres').first().json;\nconst now = new Date().toISOString();\n\nreturn [{\n  json: {\n    event_id: 'evt_timer_' + Date.now(),\n    event_type: 'timer.fired',\n    source: 'n8n',\n    target: 'ada',\n    timestamp: now,\n    idempotency_key: 'timer_' + Date.now(),\n    payload: {\n      label: params.label,\n      message: params.message,\n      delay_minutes: params.delay_minutes,\n      context: params.context\n    },\n    metadata: { workflow_name: 'ada_timer' }\n  }\n}];\n"
+      },
+      "id": "3d1a6a43-d1f0-40c4-9df1-68b626acaabd",
+      "name": "Construire événement",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2512,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.10.172:7655/api/integrations/n8n/events",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-ADA-Source",
+              "value": "n8n"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "51cbdb83-7ac9-44c3-be0e-db8b38258feb",
+      "name": "Notifier ADA",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2720,
+        784
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook ADA": {
+      "main": [
+        [
+          {
+            "node": "Extraire paramètres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraire paramètres": {
+      "main": [
+        [
+          {
+            "node": "Répondre à ADA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Répondre à ADA": {
+      "main": [
+        [
+          {
+            "node": "Attendre",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attendre": {
+      "main": [
+        [
+          {
+            "node": "Construire événement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construire événement": {
+      "main": [
+        [
+          {
+            "node": "Notifier ADA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "b46751b4-d219-42a6-8f39-dfb405ab090b",
+  "meta": {
+    "instanceId": "f4859b63c7fef8f0580b8f6687363d9803be7018e2e7b3c27af86a8f7b518548"
+  },
+  "id": "Qq5bt745oUi2Uxco",
+  "tags": []
+}
