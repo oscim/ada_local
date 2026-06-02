@@ -158,7 +158,7 @@ RÈGLES :
                 "type": "function",
                 "function": {
                     "name":        "vm_list",
-                    "description": "Liste les VMs Proxmox. Peut filtrer par instance et/ou node.",
+                    "description": "Liste les VMs et containers Proxmox. UTILISE CE NOM EXACT : vm_list. Ne pas utiliser proxmox_list_nodes, list_nodes, list_vms ou autre variante.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -381,7 +381,7 @@ RÈGLES :
                 "type": "function",
                 "function": {
                     "name":        "proxmox_instances_list",
-                    "description": "Liste toutes les instances Proxmox configurées et leur état (activées/désactivées).",
+                    "description": "Liste toutes les instances Proxmox (nodes/hyperviseurs) configurées et leur état. UTILISE CE NOM EXACT : proxmox_instances_list. Ne pas utiliser proxmox_nodes:list, describe_proxmox_nodes, proxmox_list_nodes ou autre variante.",
                     "parameters": {
                         "type": "object",
                         "properties": {

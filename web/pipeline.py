@@ -836,9 +836,12 @@ async def _stream_with_tools(
         "describe_proxmox_nodes": "proxmox_instances_list",
         "describe_proxmox":       "proxmox_instances_list",
         "proxmox_nodes":          "proxmox_instances_list",
+        "proxmox_nodes:list":     "proxmox_instances_list",
         "proxmox_describe_nodes": "proxmox_instances_list",
         "count_proxmox_nodes":    "proxmox_instances_list",
         "get_proxmox_nodes":      "proxmox_instances_list",
+        "proxmox_list":           "proxmox_instances_list",
+        "infra_list":             "proxmox_instances_list",
         # Sociétés
         "list_societes":        "list_companies",
         "get_societes":         "list_companies",
