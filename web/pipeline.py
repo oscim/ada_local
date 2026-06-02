@@ -108,6 +108,15 @@ _PROXMOX_POWER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Commande directe "ada-timer <durée> [titre/pour <label>]"
+# "ada-timer 2min titre Jeff", "ada-timer 10 minutes", "ada-timer 1h réunion"
+_ADA_TIMER_CMD_RE = re.compile(
+    r"\bada[\s-]timer\s+(\d+(?:[.,]\d+)?)\s*"
+    r"(h(?:eure?s?)?|min(?:ute?s?)?|s(?:ec(?:onde?)?s?)?)"
+    r"(?:\s+(?:titre|pour|label|de)?\s*(.+))?",
+    re.IGNORECASE,
+)
+
 # Regex de routing déterministe pour la création de timers
 # "mets/ajoute/lance un timer de 10 minutes pour les pâtes", "lance un timer 30s"
 _TIMER_RE = re.compile(
@@ -115,6 +124,30 @@ _TIMER_RE = re.compile(
     r"\s+(?:un\s+|une?\s+)?timer(?:\s+de|\s+for)?\s+(.+)",
     re.IGNORECASE,
 )
+
+# Regex pour "dans X minutes/heures [pour Y]" et "rappelle-moi dans X min"
+# Captures: group(1)=quantité, group(2)=unité, group(3)=label optionnel
+_REMIND_RE = re.compile(
+    r"(?:rappelle[\s-]?moi|préviens[\s-]?moi|prévenez[\s-]?moi|"
+    r"dis[\s-]?moi|notifie[\s-]?moi|alerte[\s-]?moi)?\s*"
+    r"dans\s+(\d+(?:[.,]\d+)?)\s*"
+    r"(h(?:eure?s?)?|min(?:ute?s?)?|s(?:ec(?:onde?)?s?)?)"
+    r"(?:\s+(?:pour|de|que|mes?|les?|à)\s+(.+))?",
+    re.IGNORECASE,
+)
+
+
+def _duration_to_minutes(qty_str: str, unit: str) -> int:
+    """Convertit une quantité + unité en nombre de minutes (min 1)."""
+    qty = float(qty_str.replace(",", "."))
+    u = unit.lower()
+    if u.startswith("h"):
+        return max(1, round(qty * 60))
+    elif u.startswith("s"):
+        return max(1, round(qty / 60))
+    else:  # minutes
+        return max(1, round(qty))
+
 
 # Regex de commande de contrôle domotique
 _CONTROL_RE = re.compile(
@@ -737,9 +770,7 @@ async def _stream_with_tools(
     from core.n8n_executor import n8n_executor
 
     plugin_functions = _pr.combined_function_definitions()
-    # Ajouter les workflows n8n personnalisés (config/n8n_workflows.json)
-    custom_n8n_functions = n8n_executor.get_function_definitions()
-    effective_functions = _FUNCTIONS + plugin_functions + custom_n8n_functions
+    effective_functions = _FUNCTIONS + plugin_functions
 
     plugin_sys = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
     dispatcher_system = (
@@ -762,17 +793,6 @@ async def _stream_with_tools(
     )
     if plugin_sys:
         dispatcher_system += f"\n\nActive plugin capabilities:\n{plugin_sys}"
-
-    # Injecter les workflows n8n découverts dynamiquement
-    if custom_n8n_functions:
-        n8n_lines = "\n".join(
-            f"- {f['function']['name']}: {f['function']['description'][:120]}"
-            for f in custom_n8n_functions
-        )
-        dispatcher_system += (
-            f"\n\nN8N workflows disponibles — appelle-les directement par leur nom exact :\n"
-            f"{n8n_lines}"
-        )
 
     yield "\x00think\x00🔍 Sélection de l'outil…"
 
@@ -849,12 +869,9 @@ async def _stream_with_tools(
         "describe_proxmox_nodes": "proxmox_instances_list",
         "describe_proxmox":       "proxmox_instances_list",
         "proxmox_nodes":          "proxmox_instances_list",
-        "proxmox_nodes:list":     "proxmox_instances_list",
         "proxmox_describe_nodes": "proxmox_instances_list",
         "count_proxmox_nodes":    "proxmox_instances_list",
         "get_proxmox_nodes":      "proxmox_instances_list",
-        "proxmox_list":           "proxmox_instances_list",
-        "infra_list":             "proxmox_instances_list",
         # Sociétés
         "list_societes":        "list_companies",
         "get_societes":         "list_companies",
@@ -935,6 +952,19 @@ async def _stream_with_tools(
     plugin_result = _pr.dispatch_action(func_name, params)
     if plugin_result is not None:
         result = plugin_result
+    elif func_name == "set_timer":
+        # set_timer LLM → n8n ada-timer (avec conversion duration→delay_minutes)
+        _dur = params.get("duration", "") or params.get("delay_minutes", "")
+        if isinstance(_dur, (int, float)):
+            _delay_min = max(1, round(_dur))
+        else:
+            _secs = function_executor._parse_duration(str(_dur))
+            _delay_min = max(1, round(_secs / 60)) if _secs > 0 else 1
+        _tlabel = params.get("label", "Timer")
+        result = n8n_executor.call("ada-timer", {"delay_minutes": _delay_min, "label": _tlabel})
+        if not result.get("success"):
+            # Fallback local si n8n indisponible
+            result = function_executor.execute("set_timer", params)
     else:
         action = func_name.replace("_", "-")
         result = n8n_executor.call(action, params)
@@ -1208,6 +1238,30 @@ async def process_message(
         yield response
         return
 
+    # Commande directe "ada-timer <durée> [titre <label>]"
+    m_cmd = _ADA_TIMER_CMD_RE.search(user_text)
+    if m_cmd:
+        _qty_str = m_cmd.group(1)
+        _unit    = m_cmd.group(2)
+        _label   = (m_cmd.group(3) or "").strip() or "Timer"
+        _delay_min = _duration_to_minutes(_qty_str, _unit)
+        _dur_text  = f"{_qty_str} {_unit}"
+        from core.n8n_executor import n8n_executor as _n8n
+        result = _n8n.call("ada-timer", {"delay_minutes": _delay_min, "label": _label})
+        if result.get("success"):
+            response = f"⏱️ Timer **{_label}** lancé pour {_dur_text}. Je vous notifierai à l'expiration."
+        else:
+            result = function_executor.execute("set_timer", {"duration": _dur_text, "label": _label})
+            response = (
+                f"⏱️ Timer **{_label}** lancé pour {_dur_text}."
+                if result.get("success") else
+                f"❌ Impossible de créer le timer."
+            )
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", response)
+        yield response
+        return
+
     # Routing déterministe pour les timers (avant LLM — le LLM ignore souvent les phrases françaises)
     m_timer = _TIMER_RE.search(user_text)
     if m_timer:
@@ -1228,13 +1282,51 @@ async def process_message(
         if not duration_str:
             duration_str = raw
             label = "Timer"
-        result = function_executor.execute("set_timer", {"duration": duration_str, "label": label})
-        if result.get("success"):
-            response = f"⏱️ Timer **{label}** lancé pour {duration_str}. Visible dans le Planificateur."
+        # Convertir en minutes pour n8n (parse via function_executor puis /60)
+        _secs = function_executor._parse_duration(duration_str)
+        _delay_min = max(1, round(_secs / 60)) if _secs > 0 else 0
+        if _delay_min > 0:
+            from core.n8n_executor import n8n_executor as _n8n
+            result = _n8n.call("ada-timer", {"delay_minutes": _delay_min, "label": label})
+            if result.get("success"):
+                response = f"⏱️ Timer **{label}** lancé pour {duration_str}. Je vous notifierai à l'expiration."
+            else:
+                # Fallback local si n8n indisponible
+                result = function_executor.execute("set_timer", {"duration": duration_str, "label": label})
+                response = (
+                    f"⏱️ Timer **{label}** lancé pour {duration_str}. Visible dans le Planificateur."
+                    if result.get("success") else
+                    f"❌ Durée non reconnue : `{duration_str}`. Essayez `10 minutes`, `1h30`, `30 secondes`, etc."
+                )
         else:
             response = (
                 f"❌ Durée non reconnue : `{duration_str}`. "
                 "Essayez `10 minutes`, `1h30`, `30 secondes`, etc."
+            )
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", response)
+        yield response
+        return
+
+    # Routing déterministe pour rappels / "dans X minutes" (sans le mot timer)
+    m_remind = _REMIND_RE.search(user_text)
+    if m_remind:
+        _qty_str = m_remind.group(1)
+        _unit    = m_remind.group(2)
+        _rlabel  = (m_remind.group(3) or "").strip() or "Rappel"
+        _delay_min = _duration_to_minutes(_qty_str, _unit)
+        _dur_text = f"{_qty_str} {_unit}"
+        from core.n8n_executor import n8n_executor as _n8n
+        result = _n8n.call("ada-timer", {"delay_minutes": _delay_min, "label": _rlabel})
+        if result.get("success"):
+            response = f"⏱️ Rappel **{_rlabel}** dans {_dur_text}. Je vous notifierai à l'expiration."
+        else:
+            # Fallback local
+            result = function_executor.execute("set_timer", {"duration": _dur_text, "label": _rlabel})
+            response = (
+                f"⏱️ Rappel **{_rlabel}** dans {_dur_text}. Visible dans le Planificateur."
+                if result.get("success") else
+                f"❌ Impossible de créer le rappel."
             )
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", response)
@@ -1310,26 +1402,8 @@ async def process_message(
 
     messages.append({"role": "user", "content": user_text})
 
-    # Routing dynamique n8n : si le message correspond à un workflow découvert → function_gemma
-    # (avant le semantic router qui ne connaît pas les workflows dynamiques)
-    _route_override: Optional[str] = None
     try:
-        from core.n8n_executor import n8n_executor as _n8n_ex
-        import re as _re_n8n
-        _msg_kws = set(_re_n8n.findall(r'[a-zàâèéêëîïôûùüÿ]{3,}', user_text.lower()))
-        for _nd in _n8n_ex.get_function_definitions():
-            _f = _nd["function"]
-            _kw_src = (_f["name"] + " " + _f["description"]).lower().replace("_", " ")
-            _n8n_kws = set(_re_n8n.findall(r'[a-zàâèéêëîïôûùüÿ]{3,}', _kw_src))
-            if len(_n8n_kws & _msg_kws) >= 2:
-                _route_override = "function_gemma"
-                logger.debug("[Pipeline] routing n8n override → function_gemma (func=%s)", _f["name"])
-                break
-    except Exception:
-        pass
-
-    try:
-        route = _route_override or semantic_route(user_text)
+        route = semantic_route(user_text)
     except Exception:
         route = "function_gemma"
 

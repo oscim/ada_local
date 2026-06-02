@@ -158,7 +158,6 @@ async def n8n_inbound_event(request: Request):
         srv  = payload.get("server", "?")
         dur  = payload.get("duration_sec", 0)
         sz   = payload.get("test_size_mb", 0)
-        # Pousser le résultat dans la mémoire de session via Radar
         summary = (
             f"Speed test terminé — {dl:.1f} Mbit/s ↓ · qualité {qual} "
             f"({sz} MB en {dur}s via {srv})"
@@ -169,8 +168,34 @@ async def n8n_inbound_event(request: Request):
                   message=summary, metadata=payload)
         except Exception:
             pass
+        try:
+            from core.telegram_adapter import telegram_adapter
+            telegram_adapter.notify_owner(f"📶 {summary}")
+        except Exception:
+            pass
         result_extra = {"summary": summary}
         logger.info("[router_n8n] Speed test reçu : %s Mbit/s (%s)", dl, qual)
+
+    elif event_type == "timer.fired":
+        label   = payload.get("label", "Timer")
+        delay   = payload.get("delay_minutes", "?")
+        context = payload.get("context") or ""
+        notif   = f'⏰ Timer "{label}" déclenché (délai : {delay} min)'
+        if context:
+            notif += f"\nContexte : {context}"
+        try:
+            from web.radar.events import emit_event as _emit
+            _emit(type="timer.fired", level="info", module="router_n8n",
+                  message=notif, metadata=payload)
+        except Exception:
+            pass
+        try:
+            from core.telegram_adapter import telegram_adapter
+            telegram_adapter.notify_owner(notif)
+        except Exception:
+            pass
+        result_extra = {"summary": notif}
+        logger.info("[router_n8n] Timer déclenché : label=%s delay=%s", label, delay)
 
     return {"ok": True, "event_id": event_id, "event_type": event_type, **result_extra}
 

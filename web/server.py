@@ -166,6 +166,10 @@ app.include_router(_infra_router)
 from web.router_documents import router as _documents_router
 app.include_router(_documents_router)
 
+# Radar — événements temps réel (SSE + polling SQLite) — toujours monté
+from web.router_radar import router as _radar_router
+app.include_router(_radar_router)
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -187,6 +191,13 @@ async def favicon():
 
 @app.on_event("startup")
 async def _startup() -> None:
+    # Enregistrer la boucle principale pour les push SSE cross-thread (port 7655)
+    import asyncio as _asyncio
+    try:
+        from web.radar.events import set_main_loop as _set_ml
+        _set_ml(_asyncio.get_event_loop())
+    except Exception:
+        pass
     # Ensure semantic memory DB is available for web chat sessions.
     memory_store.initialize()
     # Initialise la DB auth si l'auth est activée.

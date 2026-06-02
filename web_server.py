@@ -19,6 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Supprimer les InsecureRequestWarning urllib3 (services internes avec certs auto-signés)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 import uvicorn
 
 

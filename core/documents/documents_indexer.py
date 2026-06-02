@@ -249,15 +249,20 @@ def index_file(
     rel_path = str(path.relative_to(root_path)).replace("\\", "/")
 
     conn = get_connection()
+
+    # Vérifier si réindexation nécessaire (hors transaction pour éviter close-in-with)
+    row = conn.execute(
+        "SELECT id, hash FROM documents WHERE path=?", (str(path),)
+    ).fetchone()
+    if row and row["hash"] == file_hash and not force:
+        conn.close()
+        return "skipped"
+
     with conn:
+        # Re-lire row dans la transaction pour cohérence
         row = conn.execute(
             "SELECT id, hash FROM documents WHERE path=?", (str(path),)
         ).fetchone()
-
-        # Vérifier si réindexation nécessaire
-        if row and row["hash"] == file_hash and not force:
-            conn.close()
-            return "skipped"
 
         meta, body = _parse_frontmatter(text)
         title = _extract_title(meta, body, path)

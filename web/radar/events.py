@@ -20,6 +20,15 @@ from typing import Any
 # Les abonnés SSE s'enregistrent ici (set d'asyncio.Queue)
 _sse_subscribers: set = set()
 
+# Boucle principale (à renseigner au startup pour allow cross-thread push)
+_main_loop: "asyncio.AbstractEventLoop | None" = None
+
+
+def set_main_loop(loop: "asyncio.AbstractEventLoop") -> None:
+    """Appelé au startup du serveur principal pour permettre les push cross-thread."""
+    global _main_loop
+    _main_loop = loop
+
 
 def _is_enabled() -> bool:
     try:
@@ -70,11 +79,19 @@ def _truncate_strings(data: Any, max_chars: int) -> Any:
 
 
 def _notify_sse(evt: dict) -> None:
-    """Pousse l'événement dans toutes les files SSE actives (sans bloquer)."""
+    """Pousse l'événement dans toutes les files SSE actives (thread-safe).
+
+    Si appellé depuis un thread secondaire (port 7655 callback), utilise
+    call_soon_threadsafe pour réveiller les coroutines de la boucle principale.
+    """
     dead: set = set()
+    loop = _main_loop
     for q in _sse_subscribers:
         try:
-            q.put_nowait(evt)
+            if loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(q.put_nowait, evt)
+            else:
+                q.put_nowait(evt)
         except Exception:
             dead.add(q)
     _sse_subscribers.difference_update(dead)

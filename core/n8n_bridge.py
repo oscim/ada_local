@@ -29,48 +29,26 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 def _cfg() -> dict:
-    """Retourne la config n8n bridge — settings_store en priorité, config.py en fallback."""
-    try:
-        import config as _c
-        _c_base_url    = getattr(_c, "N8N_BASE_URL",           "http://localhost:5678")
-        _c_webhook_url = getattr(_c, "N8N_DEFAULT_WEBHOOK_URL", "http://localhost:5678/webhook/ada-event")
-    except Exception:
-        _c_base_url    = "http://localhost:5678"
-        _c_webhook_url = "http://localhost:5678/webhook/ada-event"
-
-    # settings_store prime sur config.py pour l'URL (modifiable depuis l'UI)
-    try:
-        from core.settings_store import settings as _ss
-        _ss_cfg    = _ss.get("n8n") or {}
-        _base_url  = _ss_cfg.get("url", _c_base_url).rstrip("/")
-    except Exception:
-        _base_url  = _c_base_url.rstrip("/")
-
-    # Recomposer le webhook_url à partir de la bonne base
-    _default_path = "/webhook/ada-event"
-    if _c_webhook_url.startswith(_c_base_url):
-        _default_path = _c_webhook_url[len(_c_base_url):]
-    _webhook_url = _base_url + _default_path
-
+    """Retourne la config n8n bridge depuis config.py (valeurs par défaut si absentes)."""
     try:
         import config as _c
         return {
-            "enabled":          getattr(_c, "N8N_BRIDGE_ENABLED",       True),
-            "base_url":         _base_url,
-            "webhook_url":      _webhook_url,
-            "timeout":          getattr(_c, "N8N_TIMEOUT_SECONDS",       10),
-            "max_retries":      getattr(_c, "N8N_MAX_RETRIES",           2),
-            "verify_ssl":       getattr(_c, "N8N_VERIFY_SSL",            False),
-            "fallback_enabled": getattr(_c, "N8N_FALLBACK_ENABLED",      True),
-            "allowed_domains":  getattr(_c, "N8N_ALLOWED_EVENT_DOMAINS", [
+            "enabled":          getattr(_c, "N8N_BRIDGE_ENABLED",         True),
+            "base_url":         getattr(_c, "N8N_BASE_URL",                "http://localhost:5678"),
+            "webhook_url":      getattr(_c, "N8N_DEFAULT_WEBHOOK_URL",     "http://localhost:5678/webhook/ada-event"),
+            "timeout":          getattr(_c, "N8N_TIMEOUT_SECONDS",         10),
+            "max_retries":      getattr(_c, "N8N_MAX_RETRIES",             2),
+            "verify_ssl":       getattr(_c, "N8N_VERIFY_SSL",              True),
+            "fallback_enabled": getattr(_c, "N8N_FALLBACK_ENABLED",        True),
+            "allowed_domains":  getattr(_c, "N8N_ALLOWED_EVENT_DOMAINS",   [
                 "domotic", "marketing", "social", "lead", "crm",
                 "support", "content", "notification", "workflow", "system",
             ]),
         }
     except Exception:
         return {
-            "enabled": False, "base_url": _base_url, "webhook_url": _webhook_url,
-            "timeout": 10, "max_retries": 2, "verify_ssl": False,
+            "enabled": False, "base_url": "", "webhook_url": "",
+            "timeout": 10, "max_retries": 2, "verify_ssl": True,
             "fallback_enabled": False, "allowed_domains": [],
         }
 
@@ -366,12 +344,6 @@ class N8nBridgeConnector:
                     timeout=timeout,
                     verify=verify,
                 )
-                # 404 = webhook non créé dans n8n → pas la peine de retry ni de marquer down
-                if resp.status_code == 404:
-                    err_msg = f"Webhook introuvable sur n8n ({url}). Créez le workflow avec ce webhook path."
-                    self._store.update_status(envelope["event_id"], "failed", err_msg)
-                    logger.warning("[N8nBridge] send_event %s : 404 webhook non trouvé — %s", event_type, url)
-                    return {"ok": False, "event_id": envelope["event_id"], "detail": err_msg, "error": "webhook_not_found"}
                 resp.raise_for_status()
                 self._store.update_status(envelope["event_id"], "sent")
                 self._emit_radar("n8n_event_sent", "info", envelope["event_id"],
