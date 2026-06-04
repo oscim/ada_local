@@ -1,0 +1,220 @@
+name: ADA Local — Web Layer
+version: 1.0.0
+
+# ── Modèles ───────────────────────────────────────────────────────────────────
+#
+# Pipeline :
+#   Plan  → Gemma 4        (raisonnement, décomposition, architecture)
+#   Code  → Qwen 2.5 Coder (écriture du code délégué par le plan)
+#   Bonus → Deepseek Coder (second avis ou tâches lourdes de refacto)
+#
+models:
+  - name: Gemma 4
+    provider: ollama
+    model: gemma4:latest
+    apiBase: http://192.168.10.172:11434
+    roles:
+      - chat
+      - apply
+
+    defaultCompletionOptions:
+      contextLength: 16384
+
+  - name: Qwen 2.5 Coder 14b
+    provider: ollama
+    model: qwen2.5-coder:14b
+    apiBase: http://192.168.10.172:11434
+    roles:
+      - chat
+      - apply
+
+  - name: Deepseek Coder 16b
+    provider: ollama
+    model: deepseek-coder-v2:16b
+    apiBase: http://192.168.10.172:11434
+    roles:
+      - chat
+      - apply
+
+# ── Mode Agent ────────────────────────────────────────────────────────────────
+#
+# Gemma 4 planifie, Qwen 2.5 Coder écrit le code.
+# Déclencher avec le prompt /plan ou le mode Agent de Continue.
+#
+agentSettings:
+  planModel: Gemma 4
+  codeModel: Qwen 2.5 Coder 14b
+  maxIterations: 8
+
+# ── Contexte automatique ──────────────────────────────────────────────────────
+context:
+  - provider: file
+    params:
+      filepath: docs/ada.md
+
+  - provider: file
+    params:
+      filepath: docs/ada_web_routes_traitement_interne_spec.md
+
+  - provider: file
+    params:
+      filepath: docs/ADA_SPEC_N8N_BRIDGE-1.md
+
+  - provider: codebase
+
+# ── Règles de codage ──────────────────────────────────────────────────────────
+rules:
+  - name: périmètre strict
+    rule: |
+      Ne modifier QUE les fichiers sous web/ et config.py.
+      Ne jamais toucher main.py ni /gui.
+      Si une modification hors périmètre semble nécessaire, signaler et demander confirmation.
+
+  - name: pipeline — ordre de traitement
+    rule: |
+      Dans pipeline.py, l'ordre de traitement est fixé et documenté dans ada.md section 5.
+      Ne jamais réorganiser les étapes sans le mentionner explicitement.
+      Le routage déterministe passe toujours avant le LLM.
+
+  - name: SSE — format obligatoire
+    rule: |
+      Tout flux SSE sur /api/chat doit se terminer par [DONE].
+      Les erreurs sont envoyées en événement SSE, jamais en exception non gérée.
+      Le format cible est {"type": "...", ...} mais la compatibilité legacy doit être maintenue.
+
+  - name: confirmation obligatoire
+    rule: |
+      Les actions Proxmox (backup, start, stop, reboot, restore) nécessitent toujours confirmation.
+      La route de confirmation est uniquement POST /api/plugins/confirm dans router_plugins.py.
+      Ne pas créer de doublon dans server.py.
+
+  - name: sécurité — secrets
+    rule: |
+      Aucun token, secret, API key, cookie ne doit apparaître dans les logs, les réponses SSE
+      ou les messages d'erreur. Masquer systématiquement.
+
+  - name: sécurité — shell_exec
+    rule: |
+      shell_exec ne doit pas être activé par défaut dans la couche web.
+      Toute exposition doit être explicitement marquée admin-only et mentionnée dans le diff.
+
+  - name: univers et contexte
+    rule: |
+      plugin_context est le champ officiel pour l'univers actif.
+      context_id est le champ officiel pour le sous-contexte.
+      company_context est legacy : maintenir la compatibilité mais ne pas l'utiliser dans le nouveau code.
+
+  - name: n8n bridge
+    rule: |
+      ADA ne génère, ne modifie et ne synchronise jamais de workflows n8n.
+      Tout échange passe par l'enveloppe d'événement standard définie dans ada.md section 9.
+      N8N_BRIDGE_ENABLED = False par défaut. ADA doit fonctionner sans n8n.
+
+  - name: décisions ouvertes
+    rule: |
+      Les points D-001 à D-006 listés dans ada.md section 14 ne doivent pas être implémentés
+      sans décision explicite dans le ticket ou la spec. Signaler si une tâche touche l'un d'eux.
+
+  - name: conventions
+    rule: |
+      Routes : kebab-case. Variables Python : snake_case. Constantes : UPPER_SNAKE_CASE.
+      Un router = un domaine. server.py = exposition uniquement, pas de logique métier.
+      config.py = constantes uniquement, pas d'imports de modules métier.
+
+  - name: plan avant code
+    rule: |
+      En mode Plan (Gemma 4), produire systématiquement :
+      1. Liste des fichiers touchés avec justification
+      2. Ordre des modifications
+      3. Points d'attention ADA (SSE, confirmation, Radar, MODULES_ENABLED, décisions ouvertes)
+      4. Délégation précise à Qwen : ce qu'il doit implémenter, fichier par fichier
+      Ne pas écrire de code en mode Plan.
+
+# ── Prompts personnalisés ─────────────────────────────────────────────────────
+prompts:
+  - name: plan
+    description: "[Gemma 4] Planifier une tâche ADA avant de coder"
+    prompt: |
+      Tu es en mode PLAN sur le projet ADA (branche univers, couche web/).
+      Analyse la demande et produis un plan structuré pour Qwen 2.5 Coder.
+
+      Demande : {input}
+
+      ## Objectif
+      (ce que la tâche doit accomplir)
+
+      ## Fichiers touchés
+      - web/xxx.py → (pourquoi)
+      - config.py → (si nécessaire)
+
+      ## Ordre des modifications
+      1. ...
+
+      ## Points d'attention ADA
+      - SSE / [DONE] si route chat
+      - MODULES_ENABLED si module conditionnel
+      - x_confirm_required si action sensible
+      - Radar events à émettre
+      - Décisions ouvertes impactées (D-001 à D-006)
+
+      ## Délégation à Qwen
+      (description précise de ce que Qwen doit coder, fichier par fichier)
+
+  - name: nouvelle route
+    description: "[Qwen] Créer une nouvelle route FastAPI pour ADA"
+    prompt: |
+      Tu travailles sur la couche web d'ADA (branche univers).
+      Réfère-toi à ada.md pour les conventions et le périmètre.
+      Crée une nouvelle route FastAPI pour : {input}
+      - Respecte le format de réponse SSE si c'est une route chat
+      - Vérifie MODULES_ENABLED si la route est conditionnelle
+      - Ajoute la journalisation Radar
+      - Ne pas exposer de secrets dans les réponses
+
+  - name: nouveau router
+    description: "[Qwen] Créer un nouveau router FastAPI pour un domaine ADA"
+    prompt: |
+      Crée un nouveau router FastAPI pour le domaine : {input}
+      Respecte la structure des routers existants d'ADA :
+      - Un fichier router_{domaine}.py
+      - Conditionné par MODULES_ENABLED si applicable
+      - Inclus dans server.py via include_router
+      - Réfère-toi à ada.md pour les conventions
+
+  - name: événement n8n
+    description: "[Qwen] Implémenter un événement n8n pour ADA"
+    prompt: |
+      Implémente l'envoi d'un événement n8n pour : {input}
+      - Utilise l'enveloppe standard définie dans ada.md section 9
+      - Respecte la taxonomie des domaines autorisés
+      - Inclus idempotency_key et correlation_id
+      - Signature HMAC SHA-256 obligatoire
+      - Vérifier N8N_BRIDGE_ENABLED avant tout appel
+
+  - name: audit sécurité
+    description: "Auditer un fichier de la couche web ADA"
+    prompt: |
+      Audite ce fichier de la couche web ADA pour les points suivants :
+      - Présence de secrets ou tokens dans les logs ou réponses
+      - Actions sensibles sans x_confirm_required
+      - shell_exec exposé sans restriction
+      - Routes sans vérification auth quand nécessaire
+      - Fuites d'erreurs en production
+      - SSE sans [DONE]
+      Fichier : {input}
+
+  - name: spec route
+    description: "Rédiger la spec Markdown d'une route ADA"
+    prompt: |
+      Rédige la spécification Markdown d'une route ADA.
+      Format : méthode, chemin, payload, réponse, auth, modules requis, exemples.
+      Route à spécifier : {input}
+
+# ── Ignore ────────────────────────────────────────────────────────────────────
+ignore:
+  - main.py
+  - gui/**
+  - "**/__pycache__/**"
+  - "**/*.pyc"
+  - ".env"
+  - "**/*.log"
