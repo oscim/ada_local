@@ -268,6 +268,33 @@ async def _startup() -> None:
             await _aio.sleep(90)
     _aio.create_task(_infra_poller())
 
+    # Intent Detection — chargement de l'index TF-IDF en tâche de fond
+    try:
+        from config import INTENT_DETECTION_ENABLED as _intent_enabled
+        if _intent_enabled:
+            import concurrent.futures as _cf_intent
+            _intent_pool = _cf_intent.ThreadPoolExecutor(max_workers=1, thread_name_prefix="intent-index")
+
+            async def _intent_index_loader():
+                import asyncio as _aio_intent
+                import logging as _log_intent
+                try:
+                    from core.intent.intent_detector import get_detector as _get_det
+                    _det = _get_det()
+                    loop = _aio_intent.get_event_loop()
+                    await loop.run_in_executor(_intent_pool, _det.load_index)
+                except Exception as _e_intent:
+                    _log_intent.getLogger(__name__).warning(
+                        "[IntentDetector] Erreur chargement index : %s", _e_intent
+                    )
+
+            _aio.create_task(_intent_index_loader())
+    except Exception as _e_intent_outer:
+        import logging as _log_outer
+        _log_outer.getLogger(__name__).warning(
+            "[IntentDetector] Erreur démarrage : %s", _e_intent_outer
+        )
+
 
 # ---------------------------------------------------------------------------
 # PWA obligatoire hors /static/
