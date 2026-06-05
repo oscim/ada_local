@@ -20,6 +20,14 @@ models:
     defaultCompletionOptions:
       contextLength: 16384
 
+  - name: Qwen 3  14b
+    provider: ollama
+    model: qwen3:14b
+    apiBase: http://192.168.10.172:11434
+    roles:
+      - chat
+      - apply
+
   - name: Qwen 2.5 Coder 14b
     provider: ollama
     model: qwen2.5-coder:14b

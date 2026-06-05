@@ -76,3 +76,14 @@ docs/margepro/usage/guide-artisan.md
 docs/margepro/usage/guide-partenaire.md
 data/radar/events.sqlite
 data/radar/events.sqlite
+.continue/agents/ada-config.yaml
+.continue/agents/ada-config.yaml
+.kilo/system-prompt
+.kilo/system-prompt-code
+.kilocode/instructions.md
+.kilocode/system-prompt
+.kilocode/system-prompt-code
+web/radar/radar_collector.py
+.continue/agents/ada-config.yaml
+.continue/agents/ada-config.yaml
+.continue/agents/ada-config.yaml
