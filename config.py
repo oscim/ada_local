@@ -303,6 +303,15 @@ N8N_ALLOWED_EVENT_DOMAINS: list = [
     "support", "content", "notification", "workflow", "system",
 ]
 
+# --- Feedback Loop & Auto-tuning ---
+FEEDBACK_ENABLED: bool = True
+FEEDBACK_AUTOSKILL_VALIDATE_THRESHOLD: int = 3   # validations pour promouvoir 'confirmed'
+FEEDBACK_AUTOSKILL_REJECT_THRESHOLD: int = 2     # rejets pour 'under_review'
+FEEDBACK_REBUILD_TRIGGER_POSITIVE: int = 10      # signaux positifs avant rebuild index
+FEEDBACK_REBUILD_TRIGGER_NEGATIVE: int = 3       # signaux négatifs avant rebuild index
+FEEDBACK_ERROR_LOG_AUTO_RADAR: bool = True       # alimentation auto depuis Radar
+FEEDBACK_ERROR_LOG_RETENTION_DAYS: int = 90
+
 # --- Console Colors ---
 GRAY = "\033[90m"
 RESET = "\033[0m"

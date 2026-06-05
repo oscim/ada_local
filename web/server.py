@@ -174,6 +174,14 @@ app.include_router(_radar_router)
 from web.router_intent import router as _intent_router
 app.include_router(_intent_router)
 
+# Feedback Loop — signaux 👍/👎 + error_log + registre d'erreurs
+from web.router_feedback import router as _feedback_router
+app.include_router(_feedback_router)
+
+# AutoSkills révision — under_review, rehabilitate, disable
+from web.router_autoskills import router as _autoskills_review_router
+app.include_router(_autoskills_review_router)
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -336,6 +344,18 @@ async def _startup() -> None:
         _log_im_outer.getLogger(__name__).warning(
             "[IntentMiner] Erreur démarrage : %s", _e_im_outer
         )
+
+    # Feedback Loop — initialisation error_store + FeedbackProcessor + hook Radar
+    try:
+        from config import FEEDBACK_ENABLED as _fb_enabled
+        if _fb_enabled:
+            from core.feedback.error_store import init_db as _fb_init_db
+            _fb_init_db()
+            from core.feedback.feedback_processor import get_processor as _get_fp
+            _get_fp()  # instanciation eagerly pour pré-charger les seuils
+    except Exception as _e_fb:
+        import logging as _log_fb
+        _log_fb.getLogger(__name__).warning("[Feedback] Erreur démarrage : %s", _e_fb)
 
 
 # ---------------------------------------------------------------------------

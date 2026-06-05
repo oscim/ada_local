@@ -45,7 +45,86 @@ function _bubble(role, content = '') {
   return d;
 }
 
-// ── Markdown / blocs de code copiables ──────────────────────────
+// ── Feedback 👍/👎 ──────────────────────────────────────────────
+function _attachFeedback(adaBubble, requestId) {
+  if (!requestId) return;
+
+  const footer = document.createElement('div');
+  footer.className = 'msg-feedback';
+  footer.innerHTML = `
+    <button class="fb-btn fb-positive" data-request-id="${requestId}" title="Réponse utile">👍</button>
+    <button class="fb-btn fb-negative" data-request-id="${requestId}" title="Réponse incorrecte">👎</button>
+  `;
+
+  const commentArea = document.createElement('div');
+  commentArea.className = 'fb-comment-area';
+  commentArea.style.display = 'none';
+  commentArea.innerHTML = `
+    <textarea class="fb-textarea" maxlength="140" placeholder="Qu'est-ce qui n'allait pas ? (optionnel)"></textarea>
+    <div class="fb-comment-actions">
+      <button class="fb-send">Envoyer</button>
+      <button class="fb-skip">Ignorer</button>
+    </div>
+  `;
+
+  adaBubble.appendChild(footer);
+  adaBubble.appendChild(commentArea);
+
+  const posBtn = footer.querySelector('.fb-positive');
+  const negBtn = footer.querySelector('.fb-negative');
+  const textarea = commentArea.querySelector('.fb-textarea');
+  const sendBtn  = commentArea.querySelector('.fb-send');
+  const skipBtn  = commentArea.querySelector('.fb-skip');
+
+  let sent = false;
+
+  async function _sendSignal(signal, comment) {
+    if (sent) return;
+    sent = true;
+    const summary = adaBubble.textContent.slice(0, 80);
+    try {
+      await fetch('/api/feedback/response', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_id: requestId, signal, comment: comment || null, response_summary: summary }),
+      });
+    } catch { /* silencieux */ }
+    // Mise à jour visuelle
+    if (signal === 'positive') {
+      posBtn.style.opacity = '1';
+      negBtn.style.opacity = '0.2';
+    } else {
+      negBtn.style.opacity = '1';
+      posBtn.style.opacity = '0.2';
+    }
+    commentArea.style.display = 'none';
+  }
+
+  posBtn.addEventListener('click', () => _sendSignal('positive'));
+
+  negBtn.addEventListener('click', () => {
+    if (sent) return;
+    commentArea.style.display = 'block';
+    textarea.focus();
+  });
+
+  sendBtn.addEventListener('click', () => {
+    _sendSignal('negative', textarea.value.trim());
+  });
+
+  skipBtn.addEventListener('click', () => {
+    _sendSignal('negative', null);
+  });
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      _sendSignal('negative', textarea.value.trim());
+    }
+  });
+}
+
+
 function _escHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
@@ -129,6 +208,7 @@ export async function sendMessage(text) {
 
   let ada = null;
   let acc = '';
+  let _currentReqId = null;
 
   try {
     const resp = await fetch('/api/chat', {
@@ -158,6 +238,10 @@ export async function sendMessage(text) {
         try {
           const obj = JSON.parse(raw);
           if (obj.error) { showToast('Erreur : ' + obj.error); break; }
+          // Capture du request_id depuis le méta-événement
+          if (obj.type === 'meta' && obj.request_id) {
+            _currentReqId = obj.request_id;
+          }
           if (obj.img_url) {
             // Afficher la capture caméra dans une bulle dédiée
             const imgBubble = document.createElement('div');
@@ -199,6 +283,8 @@ export async function sendMessage(text) {
         _attachCopyButtons(ada);
         _history.push({ role: 'assistant', content: acc });
         _speakIfEnabled(acc);
+        // Attacher les boutons de feedback 👍/👎
+        _attachFeedback(ada, _currentReqId);
       }
     }
     _isStreaming = false;

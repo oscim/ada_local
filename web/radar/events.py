@@ -111,7 +111,24 @@ def emit_event(
     except Exception as exc:
         logger.error("RadarSSE : échec persistance SQLite — %s", exc)
 
-    # 2. Diffusion SSE — directe si dans la boucle, sinon via call_soon_threadsafe
+    # 2. Hook FeedbackProcessor — alimentation automatique error_log depuis Radar
+    _RADAR_ERROR_TYPES = frozenset({
+        "llm.hallucinated_function",
+        "intent.entity_resolution_failed",
+        "n8n.call.failed",
+        "llm.timeout",
+        "proxmox.backup.failed",
+    })
+    if event.get("type") in _RADAR_ERROR_TYPES:
+        try:
+            from config import FEEDBACK_ENABLED, FEEDBACK_ERROR_LOG_AUTO_RADAR
+            if FEEDBACK_ENABLED and FEEDBACK_ERROR_LOG_AUTO_RADAR:
+                from core.feedback.feedback_processor import get_processor as _get_fp
+                _get_fp().process_radar_error(event)
+        except Exception:
+            pass
+
+    # 3. Diffusion SSE — directe si dans la boucle, sinon via call_soon_threadsafe
     try:
         loop = asyncio.get_running_loop()
         # On est dans une coroutine asyncio — diffusion directe
