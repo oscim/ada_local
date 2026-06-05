@@ -2,6 +2,12 @@
 Centralized configuration for Pocket AI.
 """
 
+# --- Intent Mining (extraction corpus depuis Radar) ---
+INTENT_MINING_ENABLED: bool = True
+INTENT_MINING_AUTO_RUN_ON_STARTUP: bool = True
+INTENT_MINING_PERIODIC_INTERVAL_MINUTES: int = 60
+INTENT_MINING_DB_PATH: str = "data/intent_corpus.db"
+
 # --- Intent Detection ---
 INTENT_DETECTION_ENABLED: bool = True
 INTENT_DETECTION_THRESHOLD_CERTAIN: float = 0.92

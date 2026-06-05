@@ -1217,35 +1217,7 @@ async def process_message(
         yield _pw_card
         return
 
-    # Analyse caméra : "analyse dep-parking", "caméra parking combien de voitures ?"
-    if any(t in text_lower for t in _CAMERA_TRIGGERS):
-        # Chercher directement le nom de la caméra dans le texte (match le plus long gagne)
-        cam = await _find_camera_in_text(text_lower)
-        # Fallback si pas trouvé via le texte : essayer via regex
-        if cam is None:
-            m_cam = _CAMERA_RE.search(text_lower)
-            cam_hint = (
-                (m_cam.group("name1") or m_cam.group("name2") or m_cam.group("name3") or "").strip()
-                if m_cam else ""
-            )
-            if cam_hint:
-                cam = await _find_camera_by_hint(cam_hint)
-        if cam is None:
-            cam = await _find_camera_by_hint("")
-        if cam is not None:
-            # Détecter si c'est juste "montre" ou une vraie analyse
-            _show_only = (
-                any(t in text_lower for t in _SHOW_ONLY_WORDS)
-                and not any(t in text_lower for t in _ANALYZE_WORDS)
-            )
-            # La question pour le LLM vision = tout le message original
-            full_answer = ""
-            async for chunk in _analyze_camera_stream(cam, user_text, show_only=_show_only):
-                full_answer += chunk
-                yield chunk
-            memory_store.save(session_id, "user", user_text)
-            memory_store.save(session_id, "assistant", full_answer)
-            return
+
 
     # Routing déterministe : état des entités domotiques (liste on/off sans LLM)
     state_answer = _format_entity_state_answer(user_text)
@@ -1282,6 +1254,37 @@ async def process_message(
         yield response
         return
 
+
+    # Analyse caméra : "analyse dep-parking", "caméra parking combien de voitures ?"
+    if any(t in text_lower for t in _CAMERA_TRIGGERS):
+        # Chercher directement le nom de la caméra dans le texte (match le plus long gagne)
+        cam = await _find_camera_in_text(text_lower)
+        # Fallback si pas trouvé via le texte : essayer via regex
+        if cam is None:
+            m_cam = _CAMERA_RE.search(text_lower)
+            cam_hint = (
+                (m_cam.group("name1") or m_cam.group("name2") or m_cam.group("name3") or "").strip()
+                if m_cam else ""
+            )
+            if cam_hint:
+                cam = await _find_camera_by_hint(cam_hint)
+        if cam is None:
+            cam = await _find_camera_by_hint("")
+        if cam is not None:
+            # Détecter si c'est juste "montre" ou une vraie analyse
+            _show_only = (
+                any(t in text_lower for t in _SHOW_ONLY_WORDS)
+                and not any(t in text_lower for t in _ANALYZE_WORDS)
+            )
+            # La question pour le LLM vision = tout le message original
+            full_answer = ""
+            async for chunk in _analyze_camera_stream(cam, user_text, show_only=_show_only):
+                full_answer += chunk
+                yield chunk
+            memory_store.save(session_id, "user", user_text)
+            memory_store.save(session_id, "assistant", full_answer)
+            return
+            
     # Commande directe "ada-timer <durée> [titre <label>]"
     m_cmd = _ADA_TIMER_CMD_RE.search(user_text)
     if m_cmd:

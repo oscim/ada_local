@@ -170,6 +170,10 @@ app.include_router(_documents_router)
 from web.router_radar import router as _radar_router
 app.include_router(_radar_router)
 
+# Intent Mining — corpus des intentions extraites du Radar
+from web.router_intent import router as _intent_router
+app.include_router(_intent_router)
+
 _STATIC = Path(__file__).parent / "static"
 
 
@@ -293,6 +297,44 @@ async def _startup() -> None:
         import logging as _log_outer
         _log_outer.getLogger(__name__).warning(
             "[IntentDetector] Erreur démarrage : %s", _e_intent_outer
+        )
+
+    # Intent Mining — extraction du corpus au démarrage + tâche périodique
+    try:
+        from config import (
+            INTENT_MINING_ENABLED as _im_enabled,
+            INTENT_MINING_AUTO_RUN_ON_STARTUP as _im_startup,
+            INTENT_MINING_PERIODIC_INTERVAL_MINUTES as _im_interval,
+        )
+        if _im_enabled:
+            import concurrent.futures as _cf_im
+            _im_pool = _cf_im.ThreadPoolExecutor(max_workers=1, thread_name_prefix="intent-miner")
+
+            async def _intent_miner_loop():
+                import asyncio as _aio_im
+                import logging as _log_im
+                _log = _log_im.getLogger(__name__)
+                from core.intent.intent_miner import get_miner as _get_miner
+                _miner = _get_miner()
+                if _im_startup:
+                    try:
+                        loop = _aio_im.get_event_loop()
+                        await loop.run_in_executor(_im_pool, _miner.run_full_extraction)
+                    except Exception as _e:
+                        _log.warning("[IntentMiner] Erreur démarrage : %s", _e)
+                while True:
+                    await _aio_im.sleep(_im_interval * 60)
+                    try:
+                        loop = _aio_im.get_event_loop()
+                        await loop.run_in_executor(_im_pool, _miner.run_full_extraction)
+                    except Exception as _e:
+                        _log.warning("[IntentMiner] Erreur extraction périodique : %s", _e)
+
+            _aio.create_task(_intent_miner_loop())
+    except Exception as _e_im_outer:
+        import logging as _log_im_outer
+        _log_im_outer.getLogger(__name__).warning(
+            "[IntentMiner] Erreur démarrage : %s", _e_im_outer
         )
 
 
