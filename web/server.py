@@ -198,6 +198,15 @@ async def _startup() -> None:
         _set_ml(_asyncio.get_event_loop())
     except Exception:
         pass
+
+    try:
+        from web.radar.radar_collector import radar_collector as _radar_collector
+        await _radar_collector.start()
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Radar] Erreur démarrage collecteur : %s", _e)
+
+
     # Ensure semantic memory DB is available for web chat sessions.
     memory_store.initialize()
     # Initialise la DB auth si l'auth est activée.
