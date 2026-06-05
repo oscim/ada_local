@@ -1040,6 +1040,7 @@ async def process_message(
 
     # ── Radar : génération du request_id et événement d'entrée ──────────────
     _req_id    = f"req_{_uuid.uuid4().hex[:16]}"
+    yield f'\x00meta\x00{_req_id}'
     _req_start = _time.perf_counter()
     try:
         from web.radar.events import emit_event as _emit_ev
@@ -1055,6 +1056,49 @@ async def process_message(
         pass
 
     text_lower = user_text.lower()
+
+    # ── Étape 2 : Détection d'intention légère ──────────────────────────────
+    _pipeline_context: dict = {}
+    try:
+        from config import INTENT_DETECTION_ENABLED as _INTENT_ENABLED
+        if _INTENT_ENABLED:
+            from core.intent.intent_detector import get_detector, normalize_text as _normalize_text
+            _det = get_detector()
+            if _det.is_ready():
+                _normalized = _normalize_text(user_text)
+                try:
+                    _match = _det.detect(_normalized, universe=plugin_context)
+                except Exception as _det_exc:
+                    from web.radar.events import emit_event as _emit_ev
+                    _emit_ev(type="intent.error", level="warning", module="web.pipeline",
+                             message=str(_det_exc), request_id=_req_id)
+                    _match = None
+
+                if _match is not None and _match.matched and _match.is_certain:
+                    from web.radar.events import emit_event as _emit_ev
+                    _emit_ev(type="intent.executed", level="info", module="web.pipeline",
+                             request_id=_req_id,
+                             metadata={"action": _match.action,
+                                       "confidence": _match.confidence,
+                                       "source_request_id": _match.source_request_id})
+                    from core.n8n_executor import n8n_executor as _n8n_exec
+                    _intent_result = _n8n_exec.call(
+                        _match.action.replace("_", "-"), _match.params
+                    )
+                    if not _intent_result.get("success"):
+                        from core.function_executor import executor as _fexec
+                        _intent_result = _fexec.execute(_match.action, _match.params)
+                    _intent_msg = _intent_result.get("message", "")
+                    if _intent_msg:
+                        memory_store.save(session_id, "user", user_text)
+                        memory_store.save(session_id, "assistant", _intent_msg)
+                        yield _intent_msg
+                        return
+
+                elif _match is not None and _match.matched:
+                    _pipeline_context["intent_candidate"] = _match
+    except Exception:
+        pass  # intent detection never blocks the pipeline
 
     # Ajout d'une URL à la surveillance d'infrastructure
     m_url = _ADD_URL_RE.search(user_text)

@@ -2,6 +2,14 @@
 Centralized configuration for Pocket AI.
 """
 
+# --- Intent Detection ---
+INTENT_DETECTION_ENABLED: bool = True
+INTENT_DETECTION_THRESHOLD_CERTAIN: float = 0.92
+INTENT_DETECTION_THRESHOLD_CANDIDATE: float = 0.75
+INTENT_DETECTION_MAX_CORPUS_SIZE: int = 5000
+INTENT_DETECTION_UNIVERSE_FILTER: bool = True
+INTENT_DETECTION_INDEX_REBUILD_ON_FEEDBACK: bool = True
+
 # --- Radar Local Event Console ---
 RADAR_ENABLED: bool = True
 RADAR_DB_PATH: str = "data/radar/events.sqlite"

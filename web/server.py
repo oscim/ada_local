@@ -200,8 +200,10 @@ async def _startup() -> None:
         pass
 
     try:
-        from web.radar.radar_collector import radar_collector as _radar_collector
-        await _radar_collector.start()
+        from web.radar.radar_collector import RadarCollector as _RadarCollector
+        import web.radar.radar_collector as _rc_module
+        _rc_module.radar_collector = _RadarCollector()
+        await _rc_module.radar_collector.start()
     except Exception as _e:
         import logging as _log
         _log.getLogger(__name__).warning("[Radar] Erreur démarrage collecteur : %s", _e)
@@ -266,6 +268,33 @@ async def _startup() -> None:
             await _aio.sleep(90)
     _aio.create_task(_infra_poller())
 
+    # Intent Detection — chargement de l'index TF-IDF en tâche de fond
+    try:
+        from config import INTENT_DETECTION_ENABLED as _intent_enabled
+        if _intent_enabled:
+            import concurrent.futures as _cf_intent
+            _intent_pool = _cf_intent.ThreadPoolExecutor(max_workers=1, thread_name_prefix="intent-index")
+
+            async def _intent_index_loader():
+                import asyncio as _aio_intent
+                import logging as _log_intent
+                try:
+                    from core.intent.intent_detector import get_detector as _get_det
+                    _det = _get_det()
+                    loop = _aio_intent.get_event_loop()
+                    await loop.run_in_executor(_intent_pool, _det.load_index)
+                except Exception as _e_intent:
+                    _log_intent.getLogger(__name__).warning(
+                        "[IntentDetector] Erreur chargement index : %s", _e_intent
+                    )
+
+            _aio.create_task(_intent_index_loader())
+    except Exception as _e_intent_outer:
+        import logging as _log_outer
+        _log_outer.getLogger(__name__).warning(
+            "[IntentDetector] Erreur démarrage : %s", _e_intent_outer
+        )
+
 
 # ---------------------------------------------------------------------------
 # PWA obligatoire hors /static/
@@ -327,6 +356,10 @@ async def chat(req: ChatRequest):
                 context_id=req.context_id,
             ):
                 # Chunks spéciaux : pass-through ou silence selon mode
+                if chunk.startswith('\x00meta\x00'):
+                    _req_id_meta = chunk[6:]
+                    yield f"data: {json.dumps({'type': 'meta', 'request_id': _req_id_meta})}\n\n"
+                    continue
                 if chunk.startswith('\x00img\x00'):
                     if mode != "suppress":
                         yield f"data: {json.dumps({'img_url': chunk[5:]})}\n\n"

@@ -1,188 +1,126 @@
-"""web/radar/events.py — emit_event() : émission d'événements Radar pour ADA.
+"""web/radar/events.py — Bus SSE + persistance des événements Radar.
 
-Cette fonction est le seul point d'entrée pour émettre un événement Radar.
-Elle ne lève JAMAIS d'exception vers l'appelant.
-Si RADAR_ENABLED = False, elle est un no-op immédiat.
+Interface publique :
+  subscribe_sse()    -> asyncio.Queue
+  unsubscribe_sse(q) -> None
+  publish(event)     -> None       ← appelé par radar_collector (événement déjà normalisé)
+  emit_event(...)    -> None       ← appelé depuis pipeline/middleware (thread-safe)
+                                      persiste ET diffuse en SSE
+  set_main_loop(loop)-> None       ← appelé au startup
 """
 from __future__ import annotations
 
 import asyncio
-import datetime
-import json
-import os
-import sys
-import traceback
-import uuid
-from pathlib import Path
+import logging
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
-# ─── File SSE pour le temps réel ──────────────────────────────────────────────
-# Les abonnés SSE s'enregistrent ici (set d'asyncio.Queue)
-_sse_subscribers: set = set()
+logger = logging.getLogger(__name__)
 
-# Boucle principale (à renseigner au startup pour allow cross-thread push)
-_main_loop: "asyncio.AbstractEventLoop | None" = None
+_main_loop: asyncio.AbstractEventLoop | None = None
+_subscribers: set[asyncio.Queue] = set()
 
 
-def set_main_loop(loop: "asyncio.AbstractEventLoop") -> None:
-    """Appelé au startup du serveur principal pour permettre les push cross-thread."""
+# ---------------------------------------------------------------------------
+# Startup
+# ---------------------------------------------------------------------------
+
+def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
     global _main_loop
     _main_loop = loop
+    logger.debug("RadarSSE : boucle principale enregistrée.")
 
 
-def _is_enabled() -> bool:
-    try:
-        from config import RADAR_ENABLED
-        return bool(RADAR_ENABLED)
-    except Exception:
-        return True
+# ---------------------------------------------------------------------------
+# Abonnements SSE
+# ---------------------------------------------------------------------------
 
-
-def _get_sensitive_fields() -> frozenset[str]:
-    try:
-        from config import RADAR_SENSITIVE_FIELDS
-        return frozenset(f.lower() for f in RADAR_SENSITIVE_FIELDS)
-    except Exception:
-        from web.radar.sanitize import _DEFAULT_SENSITIVE
-        return _DEFAULT_SENSITIVE
-
-
-def _get_text_preview_max() -> int:
-    try:
-        from config import RADAR_TEXT_PREVIEW_MAX
-        return int(RADAR_TEXT_PREVIEW_MAX)
-    except Exception:
-        return 300
-
-
-def _fallback_log(msg: str) -> None:
-    """Écrit dans data/radar/fallback.log en cas d'erreur Radar interne."""
-    try:
-        p = Path("data/radar/fallback.log")
-        p.parent.mkdir(parents=True, exist_ok=True)
-        ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        with p.open("a", encoding="utf-8") as f:
-            f.write(f"{ts} {msg}\n")
-    except Exception:
-        pass
-
-
-def _truncate_strings(data: Any, max_chars: int) -> Any:
-    """Tronque les chaînes trop longues dans un dict/list."""
-    if isinstance(data, str):
-        return data[:max_chars] + "…" if len(data) > max_chars else data
-    if isinstance(data, dict):
-        return {k: _truncate_strings(v, max_chars) for k, v in data.items()}
-    if isinstance(data, list):
-        return [_truncate_strings(v, max_chars) for v in data]
-    return data
-
-
-def _notify_sse(evt: dict) -> None:
-    """Pousse l'événement dans toutes les files SSE actives (thread-safe).
-
-    Si appellé depuis un thread secondaire (port 7655 callback), utilise
-    call_soon_threadsafe pour réveiller les coroutines de la boucle principale.
-    """
-    dead: set = set()
-    loop = _main_loop
-    for q in _sse_subscribers:
-        try:
-            if loop is not None and loop.is_running():
-                loop.call_soon_threadsafe(q.put_nowait, evt)
-            else:
-                q.put_nowait(evt)
-        except Exception:
-            dead.add(q)
-    _sse_subscribers.difference_update(dead)
-
-
-def subscribe_sse():
-    """Crée et enregistre une asyncio.Queue pour les SSE. Retourne la queue."""
-    q: asyncio.Queue = asyncio.Queue(maxsize=200)
-    _sse_subscribers.add(q)
+def subscribe_sse() -> asyncio.Queue:
+    q: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=200)
+    _subscribers.add(q)
+    logger.debug("RadarSSE : +1 abonné (%d total)", len(_subscribers))
     return q
 
 
-def unsubscribe_sse(q) -> None:
-    _sse_subscribers.discard(q)
+def unsubscribe_sse(q: asyncio.Queue) -> None:
+    _subscribers.discard(q)
+    logger.debug("RadarSSE : -1 abonné (%d total)", len(_subscribers))
 
 
-# ─── emit_event ───────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Diffusion SSE seule (appelée par radar_collector — déjà persisté)
+# ---------------------------------------------------------------------------
+
+def publish(event: dict[str, Any]) -> None:
+    """Diffuse un événement déjà persisté à tous les abonnés SSE."""
+    dead: set[asyncio.Queue] = set()
+    for q in _subscribers:
+        try:
+            q.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning("RadarSSE : queue abonné pleine, événement %s ignoré.", event.get("id"))
+        except Exception as exc:
+            logger.error("RadarSSE : erreur diffusion — %s", exc)
+            dead.add(q)
+    _subscribers.difference_update(dead)
+
+
+# ---------------------------------------------------------------------------
+# Émission complète : persistance SQLite + diffusion SSE
+# Appelée depuis le pipeline et les middlewares
+# ---------------------------------------------------------------------------
 
 def emit_event(
     type: str,
-    level: str = "info",
     message: str = "",
+    level: str = "info",
     module: str | None = None,
-    session_id: str | None = None,
-    request_id: str | None = None,
-    job_id: str | None = None,
-    document_id: str | None = None,
-    user_id: str | None = None,
     metadata: dict | None = None,
+    request_id: str | None = None,
     duration_ms: int | None = None,
-    error_code: str | None = None,
-    exception: BaseException | None = None,
+    **kwargs: Any,
 ) -> None:
     """
-    Émet un événement structuré vers le store Radar.
-    Ne lève jamais d'exception — ADA ne doit jamais être bloqué par Radar.
+    Persiste l'événement dans SQLite ET le diffuse aux abonnés SSE.
+    Thread-safe : peut être appelé depuis n'importe quel contexte.
     """
+    # Enrichir metadata avec duration_ms si fourni
+    meta = metadata or {}
+    if duration_ms is not None:
+        meta = {**meta, "duration_ms": duration_ms}
+
+    event: dict[str, Any] = {
+        "id":          f"evt_{uuid4().hex[:20]}",
+        "timestamp":   datetime.now(timezone.utc).isoformat(),
+        "level":       level,
+        "type":        type,
+        "module":      module,
+        "message":     message,
+        "metadata":    meta,
+        "request_id":  request_id,
+        "document_id": kwargs.get("document_id"),
+        "job_id":      kwargs.get("job_id"),
+        "session_id":  kwargs.get("session_id"),
+    }
+
+    # 1. Persistance SQLite — synchrone, directe
     try:
-        if not _is_enabled():
-            return
+        from web.radar.store import save_event
+        save_event(event)
+    except Exception as exc:
+        logger.error("RadarSSE : échec persistance SQLite — %s", exc)
 
-        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-        evt_id = f"evt_{uuid.uuid4().hex[:20]}"
-
-        from web.radar.sanitize import redact_sensitive_fields, safe_serialize
-        sensitive = _get_sensitive_fields()
-        max_chars = _get_text_preview_max()
-
-        # Sanitize + troncature des métadonnées
-        safe_meta: dict = {}
-        if metadata:
-            safe_meta = redact_sensitive_fields(safe_serialize(metadata), sensitive)
-            safe_meta = _truncate_strings(safe_meta, max_chars)
-
-        # Info exception (tronquée)
-        exc_info: dict = {}
-        if exception is not None:
-            exc_info = {
-                "type": type(exception).__name__,
-                "message": str(exception)[:500],
-                "traceback": traceback.format_exc()[:1000],
-            }
-
-        evt: dict = {
-            "id": evt_id,
-            "timestamp": ts,
-            "level": level,
-            "type": type,
-            "module": module,
-            "message": message,
-            "session_id": session_id,
-            "request_id": request_id,
-            "job_id": job_id,
-            "document_id": document_id,
-            "user_id": user_id,
-            "duration_ms": duration_ms,
-            "error_code": error_code,
-            "metadata": safe_meta,
-            "exception_info": exc_info,
-        }
-
-        # Persistance SQLite
-        from web.radar.store import init_db, insert_event
-        init_db()
-        insert_event(evt)
-
-        # Notification SSE (temps réel)
-        _notify_sse(evt)
-
-    except Exception as exc_radar:  # noqa: BLE001
-        try:
-            _fallback_log(f"[Radar] emit_event error for type={type!r}: {exc_radar}")
-        except Exception:
-            pass
+    # 2. Diffusion SSE — directe si dans la boucle, sinon via call_soon_threadsafe
+    try:
+        loop = asyncio.get_running_loop()
+        # On est dans une coroutine asyncio — diffusion directe
+        loop.call_soon(publish, event)
+    except RuntimeError:
+        # Pas de boucle courante — contexte thread
+        if _main_loop and _main_loop.is_running():
+            _main_loop.call_soon_threadsafe(publish, event)
+        else:
+            logger.debug("RadarSSE : emit_event sans boucle active, SSE ignoré (persisté).")
+    except Exception as exc:
+        logger.error("RadarSSE : échec diffusion SSE — %s", exc)
