@@ -200,8 +200,10 @@ async def _startup() -> None:
         pass
 
     try:
-        from web.radar.radar_collector import radar_collector as _radar_collector
-        await _radar_collector.start()
+        from web.radar.radar_collector import RadarCollector as _RadarCollector
+        import web.radar.radar_collector as _rc_module
+        _rc_module.radar_collector = _RadarCollector()
+        await _rc_module.radar_collector.start()
     except Exception as _e:
         import logging as _log
         _log.getLogger(__name__).warning("[Radar] Erreur démarrage collecteur : %s", _e)
@@ -327,6 +329,10 @@ async def chat(req: ChatRequest):
                 context_id=req.context_id,
             ):
                 # Chunks spéciaux : pass-through ou silence selon mode
+                if chunk.startswith('\x00meta\x00'):
+                    _req_id_meta = chunk[6:]
+                    yield f"data: {json.dumps({'type': 'meta', 'request_id': _req_id_meta})}\n\n"
+                    continue
                 if chunk.startswith('\x00img\x00'):
                     if mode != "suppress":
                         yield f"data: {json.dumps({'img_url': chunk[5:]})}\n\n"

@@ -1040,6 +1040,7 @@ async def process_message(
 
     # ── Radar : génération du request_id et événement d'entrée ──────────────
     _req_id    = f"req_{_uuid.uuid4().hex[:16]}"
+    yield f'\x00meta\x00{_req_id}'
     _req_start = _time.perf_counter()
     try:
         from web.radar.events import emit_event as _emit_ev
