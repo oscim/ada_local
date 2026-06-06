@@ -544,6 +544,18 @@ def _system_prompt(plugin_context_id: str | None = None) -> str:
         "à la fin de ta réponse sous la forme \"📎 Sources : nom_fichier_ou_url\". "
         "Ne jamais omettre les sources quand elles sont disponibles."
     )
+
+    # Injection des faits sémantiques consolidés
+    try:
+        semantic_facts = memory_store.build_semantic_facts()
+
+        if semantic_facts:
+            base += f"\n\n{semantic_facts}"
+    except Exception as e:
+        # pass
+        import traceback
+        traceback.print_exc()
+
     try:
         from core.plugin_registry import plugin_registry as _pr
         injection = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
@@ -1018,6 +1030,83 @@ async def _stream_with_tools(
 
 
 # ---------------------------------------------------------------------------
+# Couche 3 — Dispatcher Intent Pipeline (SPEC_INTENT_PIPELINE2)
+# ---------------------------------------------------------------------------
+async def _dispatch_intent_c3(
+    domain: str,
+    action: str,
+    params: dict,
+) -> str | None:
+    """
+    Dispatche un contrat C1/C2 résolu vers les systèmes cibles.
+    Retourne un message formaté (str) ou None si le dispatch ne s'applique pas
+    (→ fallback pipeline legacy).
+    """
+    entity_id     = params.get("entity_id", "")
+    entity_source = params.get("entity_source", "")
+    state         = params.get("state", "")
+
+    # ── Domotique (Domoticz / HA) ────────────────────────────────────────────
+    if domain == "home" and action == "control" and entity_source == "domoticz":
+        target_on: bool | None = None
+        if state in ("on", "1", "true"):
+            target_on = True
+        elif state in ("off", "0", "false"):
+            target_on = False
+        # target_on=None → toggle
+        try:
+            from core.unified_entities import unified_entity_service
+            ok = unified_entity_service.toggle_entity(entity_id, on=target_on)
+            entity_name = params.get("entity_raw", entity_id)
+            if ok:
+                new_state = "on" if target_on is True else ("off" if target_on is False else "basculé")
+                verb = "allumé" if new_state == "on" else ("éteint" if new_state == "off" else "basculé")
+                return f"✅ **{entity_name}** {verb}."
+            else:
+                return f"❌ Impossible de contrôler **{entity_name}**."
+        except Exception:
+            return None
+
+    # ── Proxmox — contrôle VM/CT ─────────────────────────────────────────────
+    if domain == "infra" and action == "control" and entity_source == "proxmox":
+        action_map = {
+            "start": "start", "on": "start",
+            "stop": "stop", "off": "stop",
+            "reboot": "reboot",
+        }
+        px_action = action_map.get(state.lower(), "")
+        if not px_action:
+            return None
+        try:
+            from core.plugin_registry import plugin_registry
+            result = plugin_registry.dispatch_action(
+                "vm_power", {"vmid": entity_id, "action": px_action}
+            )
+            if result and result.get("success"):
+                return result.get("message", f"✅ VM {entity_id} : {px_action} exécuté.")
+        except Exception:
+            pass
+        return None
+
+    # ── Proxmox — backup ─────────────────────────────────────────────────────
+    if domain == "infra" and action == "backup" and entity_source == "proxmox":
+        storage = params.get("value", "local")
+        try:
+            from core.plugin_registry import plugin_registry
+            result = plugin_registry.dispatch_action(
+                "vm_backup", {"vmid": entity_id, "storage": storage, "compress": "zstd"}
+            )
+            if result and result.get("success"):
+                return result.get("message", f"✅ Sauvegarde VM {entity_id} lancée.")
+        except Exception:
+            pass
+        return None
+
+    # Autres cas → fallback
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Point d'entrée public
 # ---------------------------------------------------------------------------
 async def process_message(
@@ -1099,6 +1188,148 @@ async def process_message(
                     _pipeline_context["intent_candidate"] = _match
     except Exception:
         pass  # intent detection never blocks the pipeline
+
+    # ── Couche 1 + 2 : Intent Pipeline (SPEC_INTENT_PIPELINE2) ─────────────
+    try:
+        from config import INTENT_PIPELINE_ENABLED as _PIPE_EN
+        if _PIPE_EN:
+            from config import (
+                INTENT_MODEL                 as _IM,
+                INTENT_CONFIDENCE_THRESHOLD  as _C1_THR,
+                ENTITY_CONFIDENCE_THRESHOLD  as _C2_THR,
+                ENTITY_AMBIGUITY_THRESHOLD   as _AMB_THR,
+            )
+            from core.intent.intent_extractor import get_extractor as _get_ex
+            _c1 = await _get_ex().extract(
+                user_text,
+                ollama_base_url=OLLAMA_URL,
+                model=_IM,
+            )
+            if _c1 is None:
+                # JSON invalide → fallback silencieux
+                try:
+                    from web.radar.events import emit_event as _re
+                    _re(type="intent.invalid_json", level="warning",
+                        module="web.pipeline", request_id=_req_id,
+                        metadata={"query_preview": user_text[:120]})
+                except Exception:
+                    pass
+            elif _c1["action"] == "passthrough":
+                # Purement conversationnel → réponse directe si response non vide
+                try:
+                    from web.radar.events import emit_event as _re
+                    _re(type="intent.passthrough", level="info",
+                        module="web.pipeline", request_id=_req_id,
+                        metadata={"intent": _c1["intent"]})
+                except Exception:
+                    pass
+                _conv_resp = (_c1.get("response") or "").strip()
+                if _conv_resp:
+                    memory_store.save(session_id, "user", user_text)
+                    memory_store.save(session_id, "assistant", _conv_resp)
+                    yield _conv_resp
+                    return
+                # response vide → on laisse le pipeline LLM répondre
+            elif _c1["confidence"] < _C1_THR or _c1["domain"] == "unknown":
+                # Confiance insuffisante → fallback pipeline legacy
+                try:
+                    from web.radar.events import emit_event as _re
+                    _re(type="intent.low_confidence", level="info",
+                        module="web.pipeline", request_id=_req_id,
+                        metadata={"confidence": _c1["confidence"],
+                                  "domain": _c1["domain"]})
+                except Exception:
+                    pass
+            else:
+                # C1 OK → Couche 2 (Entity Resolver)
+                try:
+                    from web.radar.events import emit_event as _re
+                    _re(type="intent.extracted", level="info",
+                        module="web.pipeline", request_id=_req_id,
+                        metadata={"intent": _c1["intent"], "domain": _c1["domain"],
+                                  "action": _c1["action"],
+                                  "confidence": _c1["confidence"]})
+                except Exception:
+                    pass
+
+                _ent_raw = _c1["params"].get("entity", "").strip()
+                if _ent_raw:
+                    from core.intent.entity_resolver import get_fuzzy_resolver as _gfr
+                    _c2 = _gfr().resolve(_ent_raw)
+
+                    if _c2 is None or _c2["score"] < _AMB_THR:
+                        # Entité introuvable — bloquer seulement si l'index retourne qqch
+                        if _c2 is not None:
+                            try:
+                                from web.radar.events import emit_event as _re
+                                _re(type="entity.not_found", level="info",
+                                    module="web.pipeline", request_id=_req_id,
+                                    metadata={"entity_raw": _ent_raw})
+                            except Exception:
+                                pass
+                            _nf = f"❓ Je n'ai pas trouvé d'entité correspondant à « {_ent_raw} »."
+                            memory_store.save(session_id, "user", user_text)
+                            memory_store.save(session_id, "assistant", _nf)
+                            yield _nf
+                            return
+                        # _c2 is None = index vide → fallback pipeline legacy
+
+                    elif _c2["score"] < _C2_THR:
+                        # Ambiguïté → question ciblée
+                        try:
+                            from web.radar.events import emit_event as _re
+                            _re(type="entity.ambiguous", level="info",
+                                module="web.pipeline", request_id=_req_id,
+                                metadata={"entity_raw": _ent_raw,
+                                          "candidates": _c2.get("candidates", [])})
+                        except Exception:
+                            pass
+                        _cands = _c2.get("candidates", [])
+                        _cand_str = " ou ".join(
+                            f"**{c['name']}**" for c in _cands[:3]
+                        )
+                        _ambig = f"🤔 Tu veux dire {_cand_str} ?"
+                        memory_store.save(session_id, "user", user_text)
+                        memory_store.save(session_id, "assistant", _ambig)
+                        yield _ambig
+                        return
+
+                    else:
+                        # C2 OK → enrichir params et dispatcher (Couche 3)
+                        try:
+                            from web.radar.events import emit_event as _re
+                            _re(type="entity.resolved", level="info",
+                                module="web.pipeline", request_id=_req_id,
+                                metadata={"entity_raw": _ent_raw,
+                                          "entity_id": _c2["entity_id"],
+                                          "source": _c2["source"],
+                                          "score": round(_c2["score"], 3)})
+                        except Exception:
+                            pass
+
+                        _c3_params = dict(_c1["params"])
+                        _c3_params["entity_raw"]    = _ent_raw
+                        _c3_params["entity_id"]     = _c2["entity_id"]
+                        _c3_params["entity_source"] = _c2["source"]
+
+                        _c3_result = await _dispatch_intent_c3(
+                            domain=_c1["domain"],
+                            action=_c1["action"],
+                            params=_c3_params,
+                        )
+                        if _c3_result is not None:
+                            memory_store.save(session_id, "user", user_text)
+                            memory_store.save(session_id, "assistant", _c3_result)
+                            yield _c3_result
+                            return
+                        # dispatch retourne None → fallback pipeline legacy
+
+                # Pas d'entité dans params ou C3 non résolu → fallback
+    except Exception:
+        pass  # intent pipeline never blocks the legacy pipeline
+
+    # ── intent.pipeline.fallback (radar) ────────────────────────────────────
+    # (émis implicitement — le pipeline legacy prend la suite)
 
     # Ajout d'une URL à la surveillance d'infrastructure
     m_url = _ADD_URL_RE.search(user_text)
@@ -1284,7 +1515,7 @@ async def process_message(
             memory_store.save(session_id, "user", user_text)
             memory_store.save(session_id, "assistant", full_answer)
             return
-            
+
     # Commande directe "ada-timer <durée> [titre <label>]"
     m_cmd = _ADA_TIMER_CMD_RE.search(user_text)
     if m_cmd:

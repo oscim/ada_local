@@ -94,6 +94,20 @@ def inject_autoskills(
                     "query_preview": query[:80],
                 },
             )
+            # Enregistre l'injection pour le feedback
+            try:
+                from core.skills.skills_db import get_connection
+                conn = get_connection()
+                for skill_id in meta.get("skills_injected", []):
+                    conn.execute(
+                        "INSERT OR IGNORE INTO autoskill_injections (skill_id, session_id, request_id, query, domain, score) VALUES (?,?,?,?,?,?)",
+                        (skill_id, session_id, request_id, query[:200], domain, 1.0),
+                    )
+                conn.commit()
+                conn.close()
+            except Exception as e:
+                logger.warning("[AutoSkills] injection record error: %s", e)
+
         else:
             _radar(
                 "autoskills.context.empty", "info",
@@ -129,6 +143,7 @@ async def maybe_update_autoskill(
     request_id: str,
     session_id: str,
     call_llm,
+    action_success: bool = False,
 ) -> Optional[str]:
     """
     Analyse la conversation et crée ou enrichit une AutoSkill si pertinent.
@@ -155,7 +170,8 @@ async def maybe_update_autoskill(
         window.append({"role": "user",      "content": user_text})
         window.append({"role": "assistant", "content": assistant_text})
 
-        if not should_generate_skill(window):
+        # if not should_generate_skill(window):
+        if not action_success:
             return None
 
         _radar("autoskills.generation.started", "info",

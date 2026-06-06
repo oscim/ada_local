@@ -252,6 +252,27 @@ class MemoryStore:
         ).fetchone()
         return row is not None
 
+    def build_semantic_facts(self) -> str:
+        consolidated = self.get_consolidated(days=90)
+        # print(f"[DEBUG semantic] {len(consolidated)} consolidated records found", flush=True)
+        if not consolidated:
+            return ""
+        lines = ["[FAITS CONNUS SUR L'UTILISATEUR — priorité haute]"]
+        for c in consolidated:
+            facts = c["facts"]
+            if not isinstance(facts, list):
+                continue
+            for fact in facts:
+                if isinstance(fact, dict) and all(k in fact for k in ("subject", "relation", "object")):
+                    lines.append(f"• {fact['subject']} → {fact['relation']} → {fact['object']}")
+                elif isinstance(fact, str) and fact.strip():
+                    lines.append(f"• {fact}")
+        if len(lines) == 1:
+            return ""
+        result = "\n".join(lines)
+        # print(f"[DEBUG semantic output]\n{result}", flush=True)
+        return result
+
     # ── Injection helper ──────────────────────────────────────────────────────
 
     def build_context(self, query: str, current_session_id: Optional[str] = None,

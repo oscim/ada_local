@@ -196,3 +196,142 @@ def get_resolver() -> EntityResolver:
         except Exception:
             _resolver_instance = EntityResolver()
     return _resolver_instance
+
+
+
+# ---------------------------------------------------------------------------
+# Lexique domotique — chargé depuis le skill "lexique" ou "lexicon"
+# ---------------------------------------------------------------------------
+
+_domotique_lexicon: dict[str, str] | None = None
+
+
+def _load_domotique_lexicon() -> dict[str, str]:
+    """Charge le lexique depuis le skill dont le name contient 'lexique' ou 'lexicon'."""
+    global _domotique_lexicon
+    if _domotique_lexicon is not None:
+        return _domotique_lexicon
+    try:
+        from core.skills.skills_db import get_connection
+        conn = get_connection()
+        row = conn.execute(
+            "SELECT content FROM skills "
+            "WHERE (name LIKE '%lexique%' OR name LIKE '%lexicon%') "
+            "AND status='active' LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if not row:
+            _domotique_lexicon = {}
+            return _domotique_lexicon
+        lexicon: dict[str, str] = {}
+        for line in row[0].splitlines():
+            if "|" not in line or "---" in line or "Ce que" in line or "Fragment" in line:
+                continue
+            parts = [p.strip() for p in line.split("|") if p.strip()]
+            if len(parts) >= 2:
+                mots, fragment = parts[0], parts[1].upper()
+                for mot in mots.split(","):
+                    mot = mot.strip().lower()
+                    if mot:
+                        lexicon[mot] = fragment
+        _domotique_lexicon = lexicon
+    except Exception:
+        _domotique_lexicon = {}
+    return _domotique_lexicon
+
+
+def _apply_domotique_lexicon(query: str) -> str:
+    """Remplace les tokens utilisateur par leurs fragments techniques."""
+    lexicon = _load_domotique_lexicon()
+    if not lexicon:
+        return query
+    tokens = query.split()
+    expanded = [lexicon.get(t, t) for t in tokens]
+    return " ".join(expanded)
+
+# ---------------------------------------------------------------------------
+# Couche 2 — FuzzyEntityResolver (SPEC_INTENT_PIPELINE2)
+# Mappe un nom brut (params.entity de C1) vers un ID réel via l'EntityIndex.
+# ---------------------------------------------------------------------------
+
+import difflib as _difflib
+
+
+def _fuzzy_score(a: str, b: str) -> float:
+    """Similarité [0, 1] entre deux chaînes normalisées."""
+    return _difflib.SequenceMatcher(None, a, b).ratio()
+
+
+class FuzzyEntityResolver:
+    """
+    Matching fuzzy local (sans LLM) entre un nom d'entité brut et l'EntityIndex.
+
+    resolve(entity_raw) retourne un dict :
+      {
+        "entity_id":  str,
+        "source":     str,
+        "name":       str,
+        "score":      float,       # [0, 1]
+        "candidates": list[dict],  # top-3 candidats pour message d'ambiguïté
+      }
+    ou None si l'index est vide.
+    """
+
+    def resolve(self, entity_raw: str) -> dict | None:
+        from core.intent.entity_index import entity_index, normalize_entry
+
+        entries = entity_index.get_all()
+        if not entries:
+            return None
+
+        query = normalize_entry(entity_raw)
+        if not query:
+            return None
+
+        # Expansion via lexique domotique
+        query_expanded = _apply_domotique_lexicon(query)
+        if query_expanded != query:
+            query = query_expanded
+
+        scored: list[tuple[float, Any]] = []
+        for entry in entries:
+            # Score maximum sur le nom et tous les alias normalisés
+            best = max(
+                _fuzzy_score(query, alias) for alias in ([normalize_entry(entry.name)] + entry.aliases)
+            )
+            # Bonus : contenance exacte (query ⊂ alias ou alias ⊂ query)
+            for alias in ([normalize_entry(entry.name)] + entry.aliases):
+                if query in alias or alias in query:
+                    best = max(best, 0.80)
+            scored.append((best, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top = scored[:5]
+
+        if not top:
+            return None
+
+        best_score, best_entry = top[0]
+        candidates = [
+            {"name": e.name, "entity_id": e.entity_id, "source": e.source, "score": round(s, 3)}
+            for s, e in top[:3]
+        ]
+
+        return {
+            "entity_id":  best_entry.entity_id,
+            "source":     best_entry.source,
+            "name":       best_entry.name,
+            "score":      best_score,
+            "candidates": candidates,
+        }
+
+
+# Singleton lazy
+_fuzzy_resolver: FuzzyEntityResolver | None = None
+
+
+def get_fuzzy_resolver() -> FuzzyEntityResolver:
+    global _fuzzy_resolver
+    if _fuzzy_resolver is None:
+        _fuzzy_resolver = FuzzyEntityResolver()
+    return _fuzzy_resolver

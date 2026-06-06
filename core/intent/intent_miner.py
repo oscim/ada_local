@@ -215,7 +215,7 @@ class IntentMiner:
         if not raw_text:
             # Essayer dans metadata
             meta = query_event.get("metadata") or {}
-            raw_text = meta.get("message") or meta.get("query") or ""
+            raw_text = meta.get("message") or meta.get("query") or meta.get("query_preview") or ""
         if not raw_text:
             return None
 

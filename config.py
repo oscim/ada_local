@@ -6,7 +6,7 @@ Centralized configuration for Pocket AI.
 INTENT_MINING_ENABLED: bool = True
 INTENT_MINING_AUTO_RUN_ON_STARTUP: bool = True
 INTENT_MINING_PERIODIC_INTERVAL_MINUTES: int = 60
-INTENT_MINING_DB_PATH: str = "data/intent_corpus.db"
+INTENT_MINING_DB_PATH: str = "data/intent_corpus.sqlite"
 
 # --- Intent Detection ---
 INTENT_DETECTION_ENABLED: bool = True
@@ -289,6 +289,22 @@ MODULES_ENABLED: dict = {
     "n8n_bridge":   True,    # → Connecteur n8n sortant (events + fallback)
     "n8n_fallback": True,    # → Pipeline fallback automatique vers n8n
 }
+
+# --- Intent Pipeline (SPEC_INTENT_PIPELINE2) ---
+INTENT_DETECTION_ENABLED  = False   # Détecteur legacy (intent_detector.py)
+INTENT_PIPELINE_ENABLED   = True    # Nouveau pipeline C1/C2/C3 agnostique à la langue
+
+INTENT_MODEL = RESPONDER_MODEL      # Modèle utilisé pour l'extraction d'intention
+
+INTENT_CONFIDENCE_THRESHOLD = 0.85  # Seuil C1 : en dessous → fallback pipeline legacy
+ENTITY_CONFIDENCE_THRESHOLD = 0.85  # Seuil C2 : en dessous mais > AMBIGUITY → question ciblée
+ENTITY_AMBIGUITY_THRESHOLD  = 0.60  # Seuil C2 : en dessous → "entité inconnue"
+
+# Intervalles de polling d'index (secondes)
+ENTITY_SYNC_INTERVAL_DOMOTICZ = 300   # 5 min
+ENTITY_SYNC_INTERVAL_PROXMOX  = 600   # 10 min
+ENTITY_SYNC_INTERVAL_DOLIBARR = 3600  # 1 heure
+ENTITY_SYNC_INTERVAL_RMM      = 600   # 10 min
 
 # --- N8N Bridge ---
 N8N_BRIDGE_ENABLED           = True

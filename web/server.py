@@ -357,6 +357,16 @@ async def _startup() -> None:
         import logging as _log_fb
         _log_fb.getLogger(__name__).warning("[Feedback] Erreur démarrage : %s", _e_fb)
 
+    # Intent Pipeline — polling de l'index d'entités (SPEC_INTENT_PIPELINE2)
+    try:
+        from config import INTENT_PIPELINE_ENABLED as _pipe_en
+        if _pipe_en:
+            from core.intent.entity_index import entity_index as _ei
+            _ei.start_polling()
+    except Exception as _e_pipe:
+        import logging as _log_pipe
+        _log_pipe.getLogger(__name__).warning("[IntentPipeline] Erreur démarrage polling : %s", _e_pipe)
+
 
 # ---------------------------------------------------------------------------
 # PWA obligatoire hors /static/
@@ -467,8 +477,12 @@ async def chat(req: ChatRequest):
 
 
 class ConfirmRequest(BaseModel):
-    func:   str
-    params: dict = {}
+    func:           str
+    params:         dict = {}
+    request_id:     str | None = None
+    session_id:     str | None = None
+    user_text:      str | None = None
+    plugin_context: str | None = None
 
 
 @app.post("/api/plugins/confirm")
@@ -487,6 +501,39 @@ async def plugins_confirm(req: ConfirmRequest, request: Request):
         result = _pr.dispatch_action(req.func, req.params)
         if result is None:
             return {"success": False, "message": "Plugin introuvable pour cette action."}
+        # Déclenche maybe_update_autoskill si l'action a réussi
+        if result.get("success") and req.user_text:
+            try:
+                import asyncio as _asyncio
+                from core.skills.autoskills_runtime import maybe_update_autoskill
+                from config import OLLAMA_URL, RESPONDER_MODEL
+                from core.settings_store import settings as _s
+                import httpx as _httpx
+
+                async def _call_llm_simple(messages, thinking=False):
+                    _model = _s.get("models.chat", RESPONDER_MODEL) or RESPONDER_MODEL
+                    _base = OLLAMA_URL.rstrip("/")
+                    if _base.endswith("/api"):
+                        _base = _base[:-4]
+                    async with _httpx.AsyncClient(timeout=60.0) as _c:
+                        _r = await _c.post(
+                            f"{_base}/api/chat",
+                            json={"model": _model, "messages": messages, "stream": False},
+                        )
+                        return _r.json().get("message", {}).get("content", "")
+
+                _asyncio.create_task(maybe_update_autoskill(
+                    history=[],
+                    user_text=req.user_text,
+                    assistant_text=result.get("message", ""),
+                    domain=req.plugin_context or "auto",
+                    request_id=req.request_id or "",
+                    session_id=req.session_id or "web_chat",
+                    call_llm=_call_llm_simple,
+                    action_success=True,
+                ))
+            except Exception:
+                pass
         return result
     except Exception as e:
         return {"success": False, "message": str(e)}
