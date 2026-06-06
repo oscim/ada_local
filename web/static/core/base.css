@@ -1346,3 +1346,153 @@ canvas.spark{width:100%!important;height:28px!important;display:block;}
 .badge-ok      {background:rgba(0,217,126,.12);color:#00d97e;font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:.06em;}
 .badge-dim     {background:rgba(255,255,255,.05);color:var(--text-dim,#64748b);font-size:8px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:.06em;}
 .re-badges     {display:flex;flex-direction:column;gap:3px;align-items:flex-end;flex-shrink:0;}
+
+
+
+/* ── Feedback 👍/👎 ───────────────────────────────────────────── */
+
+.msg-feedback {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  opacity: 0;
+  transition: opacity .15s;
+}
+
+.msg.ada:hover .msg-feedback,
+.msg.ada:focus-within .msg-feedback {
+  opacity: 0.5;
+}
+
+.fb-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: .88rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+  opacity: inherit;
+  transition: opacity .15s, background .15s;
+  line-height: 1;
+}
+
+.fb-btn:hover {
+  background: var(--glow, rgba(255,255,255,.08));
+  opacity: 1 !important;
+}
+
+.fb-btn.active,
+.fb-btn[style*="opacity: 1"] {
+  opacity: 1 !important;
+}
+
+.fb-comment-area {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fb-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  background: var(--surface2, rgba(255,255,255,.05));
+  color: var(--text);
+  font-size: .85rem;
+  font-family: inherit;
+  resize: none;
+  min-height: 36px;
+}
+
+.fb-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.fb-comment-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.fb-send,
+.fb-skip {
+  background: none;
+  border: 1px solid var(--border, rgba(255,255,255,.15));
+  color: var(--text-mid, rgba(255,255,255,.6));
+  font-size: .8rem;
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color .15s, border-color .15s;
+}
+
+.fb-send:hover { color: var(--accent); border-color: var(--accent); }
+.fb-skip:hover  { color: var(--text); }
+
+/* Hover feedback sur les bulles index.html (.msg-ada) */
+.msg-ada:hover .msg-feedback,
+.msg-ada:focus-within .msg-feedback {
+  opacity: 0.5;
+}
+
+/* ── Code blocks ─────────────────────────────────────────────── */
+.code-block {
+  margin: 8px 0;
+  border-radius: 6px;
+  border: 1px solid var(--border, rgba(255,255,255,.12));
+  background: rgba(0,0,0,.25);
+  overflow: hidden;
+}
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 10px;
+  background: rgba(255,255,255,.04);
+  border-bottom: 1px solid var(--border, rgba(255,255,255,.1));
+}
+.code-lang {
+  font-size: .72rem;
+  font-family: 'DM Mono', monospace;
+  color: var(--accent, #17c3e8);
+  opacity: .7;
+}
+.code-block pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: .82rem;
+  line-height: 1.55;
+}
+.code-block code {
+  font-family: 'DM Mono', monospace;
+  color: var(--text, #e2e8f0);
+}
+.copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-dim, #94a3b8);
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: color .15s;
+}
+.copy-btn:hover { color: var(--accent, #17c3e8); }
+.copy-btn.copied { color: var(--green, #4ade80); }
+.inline-code {
+  background: rgba(255,255,255,.1);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: 'DM Mono', monospace;
+  font-size: .9em;
+}
+

@@ -812,6 +812,51 @@ function _appendMsg(t,who){
   return d;
 }
 
+function _attachFeedback(bubble, requestId){
+  if(!requestId) return;
+  const footer=document.createElement('div');
+  footer.className='msg-feedback';
+  footer.innerHTML=`
+    <button class="fb-btn fb-positive" data-request-id="${requestId}" title="Réponse utile">👍</button>
+    <button class="fb-btn fb-negative" data-request-id="${requestId}" title="Réponse incorrecte">👎</button>`;
+  const commentArea=document.createElement('div');
+  commentArea.className='fb-comment-area';
+  commentArea.style.display='none';
+  commentArea.innerHTML=`
+    <textarea class="fb-textarea" maxlength="140" placeholder="Qu'est-ce qui n'allait pas ? (optionnel)"></textarea>
+    <div class="fb-comment-actions">
+      <button class="fb-send">Envoyer</button>
+      <button class="fb-skip">Ignorer</button>
+    </div>`;
+  bubble.appendChild(footer);
+  bubble.appendChild(commentArea);
+  const posBtn=footer.querySelector('.fb-positive');
+  const negBtn=footer.querySelector('.fb-negative');
+  const textarea=commentArea.querySelector('.fb-textarea');
+  const sendBtn=commentArea.querySelector('.fb-send');
+  const skipBtn=commentArea.querySelector('.fb-skip');
+  let sent=false;
+  async function _sendSignal(signal,comment){
+    if(sent)return; sent=true;
+    const summary=bubble.textContent.slice(0,80);
+    try{
+      await fetch('/api/feedback/response',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({request_id:requestId,signal,comment:comment||null,response_summary:summary}),
+      });
+    }catch{/*silencieux*/}
+    posBtn.style.opacity=signal==='positive'?'1':'0.2';
+    negBtn.style.opacity=signal==='negative'?'1':'0.2';
+    commentArea.style.display='none';
+  }
+  posBtn.addEventListener('click',()=>_sendSignal('positive'));
+  negBtn.addEventListener('click',()=>{if(sent)return;commentArea.style.display='block';textarea.focus();});
+  sendBtn.addEventListener('click',()=>_sendSignal('negative',textarea.value.trim()));
+  skipBtn.addEventListener('click',()=>_sendSignal('negative',null));
+  textarea.addEventListener('keydown',(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();_sendSignal('negative',textarea.value.trim());}});
+}
+
 async function sendMsg(){
   const t=_chatInput.value.trim();
   if(!t)return;
@@ -860,16 +905,52 @@ async function sendMsg(){
     let buf='',fullText='';
     let _thisReqId=null; // A-005 : request_id de cette conversation
 
-    // Rendu markdown simplifié
+    // Rendu markdown avec blocs de code copiables
+    const _COPY_ICO=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    function _esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+    function _inlineText(s){
+      const parts=[];let last=0;
+      for(const m of s.matchAll(/`([^`\n]+)`/g)){
+        parts.push(_esc(s.slice(last,m.index)));
+        parts.push(`<code class="inline-code">${_esc(m[1])}</code>`);
+        last=m.index+m[0].length;
+      }
+      parts.push(_esc(s.slice(last)));
+      return parts.join('').replace(/\n/g,'<br>');
+    }
     function _md(t){
-      return t
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+      let html='';let last=0;
+      for(const m of t.matchAll(/```([\w-]*)\n?([\s\S]*?)```/g)){
+        // texte avant le bloc
+        html+=_inlineText(t.slice(last,m.index))
+          .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
+          .replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
+          .replace(/^#{1,3} (.+)$/gm,'<strong style="font-size:1.05em;display:block;margin:8px 0 3px">$1</strong>')
+          .replace(/^[-•] (.+)$/gm,'• $1');
+        const lang=m[1]||'';
+        const code=m[2].replace(/\n$/,'');
+        html+=`<div class="code-block"><div class="code-header"><span class="code-lang">${_esc(lang)}</span><button class="copy-btn" title="Copier">${_COPY_ICO}</button></div><pre><code>${_esc(code)}</code></pre></div>`;
+        last=m.index+m[0].length;
+      }
+      html+=_inlineText(t.slice(last))
         .replace(/\*\*([^*\n]+)\*\*/g,'<strong>$1</strong>')
         .replace(/\*([^*\n]+)\*/g,'<em>$1</em>')
-        .replace(/`([^`\n]+)`/g,'<code style="background:rgba(255,255,255,.1);padding:1px 4px;border-radius:3px">$1</code>')
         .replace(/^#{1,3} (.+)$/gm,'<strong style="font-size:1.05em;display:block;margin:8px 0 3px">$1</strong>')
-        .replace(/^[-•] (.+)$/gm,'• $1')
-        .replace(/\n/g,'<br>');
+        .replace(/^[-•] (.+)$/gm,'• $1');
+      return html;
+    }
+    function _attachCopyBtns(el){
+      el.querySelectorAll('.copy-btn').forEach(btn=>{
+        btn.addEventListener('click',async()=>{
+          const code=btn.closest('.code-block').querySelector('code').textContent;
+          try{await navigator.clipboard.writeText(code);}catch{
+            const ta=Object.assign(document.createElement('textarea'),{value:code});
+            document.body.appendChild(ta);ta.select();document.execCommand('copy');ta.remove();
+          }
+          btn.innerHTML='✓ Copié';btn.classList.add('copied');
+          setTimeout(()=>{btn.innerHTML=_COPY_ICO;btn.classList.remove('copied');},2000);
+        });
+      });
     }
 
     while(true){
@@ -919,10 +1000,15 @@ async function sendMsg(){
       }
     }
     if(fullText){
+      // Rendu final + boutons copier
+      bodyEl.innerHTML=_md(fullText);
+      _attachCopyBtns(bodyEl);
       _history.push({role:'assistant',content:fullText});
       _speakIfEnabled(fullText);
       // A-004 : indicateur de santé Radar
       if(_thisReqId) _appendRadarHealthDot(msgEl, _thisReqId);
+      // Feedback 👍/👎
+      _attachFeedback(msgEl, _thisReqId);
     }
   }catch(e){
     typing.classList.remove('on');
