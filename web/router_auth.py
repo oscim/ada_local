@@ -56,6 +56,9 @@ def _get_verified(request: Request) -> Optional[dict]:
 
 
 def _require_auth(request: Request) -> dict:
+    # Si l'auth est désactivée, accès libre (réseau local de confiance)
+    if not settings.get("auth.enabled", False):
+        return {"groups": ["admin"], "sub": "local"}
     payload = _get_verified(request)
     if not payload:
         raise HTTPException(status_code=401, detail="Non authentifié")
