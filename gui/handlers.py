@@ -338,6 +338,11 @@ class ChatWorker(QObject):
         ollama_url = app_settings.get("ollama_url", OLLAMA_URL)
         model = app_settings.get("models.chat", RESPONDER_MODEL)
 
+        # Fonctions dynamiques : FUNCTIONS natives + fonctions des plugins actifs
+        from core.plugin_registry import plugin_registry as _pr
+        plugin_functions = _pr.combined_function_definitions()
+        effective_functions = FUNCTIONS + plugin_functions
+
         try:
             ensure_qwen_loaded()
             mark_qwen_used()
@@ -376,7 +381,7 @@ class ChatWorker(QObject):
                         },
                         {"role": "user", "content": self.user_text},
                     ],
-                    "tools": FUNCTIONS,
+                    "tools": effective_functions,
                     "stream": False,
                     "think": False,
                 },
@@ -404,13 +409,29 @@ class ChatWorker(QObject):
 
         self.status.emit(f"Executing {func_name}...")
 
+        # Vérification confirmation requise (actions sensibles déclarées dans effective_functions)
+        func_def = next((f for f in effective_functions if f["function"]["name"] == func_name), None)
+        if func_def and func_def["function"].get("x_confirm_required"):
+            confirm_msg = func_def["function"].get("x_confirm_message", f"Confirmer {func_name} ?")
+            # Émettre signal confirm si disponible, sinon bloquer silencieusement
+            if hasattr(self, "confirm_required"):
+                self.confirm_required.emit(func_name, params, confirm_msg)
+            else:
+                self._stream_qwen_response(False)
+            return
+
         # Convert LLM func_name (underscores) to n8n action (hyphens)
         action = func_name.replace("_", "-")
 
         if func_name == "web_search":
             self.search_start.emit(params.get("query", ""))
 
-        result = n8n_executor.call(action, params)
+        # Tenter dispatch plugin avant FunctionExecutor / n8n_executor
+        plugin_result = _pr.dispatch_action(func_name, params)
+        if plugin_result is not None:
+            result = plugin_result
+        else:
+            result = n8n_executor.call(action, params)
 
         if func_name == "web_search":
             self.search_end.emit()
@@ -887,6 +908,14 @@ class ChatHandlers(QObject):
             new_system = base_system + f"\n\n### Contexte société ###\n{self._societe_context}"
         else:
             new_system = base_system
+
+        # Injection des capacités plugins actifs
+        from core.plugin_registry import plugin_registry as _pr_handler
+        plugin_context = _pr_handler.combined_system_prompt_injection(
+            context_id=company_id or None
+        )
+        if plugin_context:
+            new_system += f"\n\n### Capacités disponibles ###\n{plugin_context}"
 
         if self.messages:
             self.messages[0]["content"] = new_system

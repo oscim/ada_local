@@ -44,13 +44,12 @@ from core.i18n import tr
 
 # MODULE_SOCIETE: guard — imports conditionnels selon MODULES_ENABLED
 from config import MODULES_ENABLED as _MODULES_ENABLED
+from core.plugin_registry import register_enabled_plugins, plugin_registry
 if _MODULES_ENABLED.get("societe", False):
-    from core.plugin_registry import register_enabled_plugins
     from gui.tabs.societe_dashboard import CompaniesDashboardTab
     from gui.tabs.societe_detail import CompanyDetailTab
     from gui.components.societe_context_bar import ChatContextBar as SocieteContextBar
 else:
-    register_enabled_plugins = None
     CompaniesDashboardTab = None
     CompanyDetailTab = None
     SocieteContextBar = None
@@ -111,9 +110,22 @@ class MainWindow(FluentWindow):
         # Flag to prevent duplicate signal connections
         self._chat_signals_connected = False
 
-        # MODULE_SOCIETE: enregistrement des plugins actifs
-        if _MODULES_ENABLED.get("societe", False) and register_enabled_plugins:
-            register_enabled_plugins()
+        # MODULE_SOCIETE: enregistrement des plugins actifs (tous modules)
+        register_enabled_plugins()
+
+        # Enrichir le semantic_router avec les utterances des plugins
+        try:
+            from core.semantic_router import inject_plugin_utterances
+            inject_plugin_utterances(plugin_registry.combined_semantic_utterances())
+        except Exception as _e:
+            print(f"[App] inject_plugin_utterances: {_e}")
+
+        # Enregistrer les webhooks n8n des plugins
+        try:
+            from core.n8n_executor import n8n_executor as _n8n
+            _n8n.register_plugin_webhooks(plugin_registry.combined_n8n_webhooks())
+        except Exception as _e:
+            print(f"[App] register_plugin_webhooks: {_e}")
 
         self._init_window()
         self._connect_signals()

@@ -1,0 +1,1 @@
+Tu réponds toujours en français. Ne jamais utiliser une autre langue
