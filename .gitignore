@@ -87,3 +87,10 @@ web/radar/radar_collector.py
 .continue/agents/ada-config.yaml
 .continue/agents/ada-config.yaml
 .continue/agents/ada-config.yaml
+data
+.gitignore
+rag
+skills
+skills_seed
+docs
+default/data/radar.db

@@ -151,7 +151,8 @@ function _profileCard(p) {
 // ── Form builders ─────────────────────────────────────────────
 
 function _uniOptions(current) {
-  return Object.entries(_UNI).map(([v, m]) =>
+  const blank = `<option value="" ${!current ? 'selected' : ''}>— Univers —</option>`;
+  return blank + Object.entries(_UNI).map(([v, m]) =>
     `<option value="${v}" ${current === v ? 'selected' : ''}>${m.label}</option>`
   ).join('');
 }
@@ -189,7 +190,7 @@ function _instForm(id, inst, companies, pbsList) {
     </div>
     <div class="infra-form-grid cols3" style="margin-top:10px">
       <label><span>Univers</span>
-        <select class="infra-input" name="universe">${_uniOptions(v.universe||'opent')}</select>
+        <select class="infra-input" name="universe">${_uniOptions(v.universe||'')}</select>
       </label>
       <label><span>Société</span>
         <select class="infra-input" name="company_id">${_companyOptions(v.company_id, companies)}</select>
@@ -237,7 +238,7 @@ function _pbsForm(id, pbs, companies) {
     </div>
     <div class="infra-form-grid cols3" style="margin-top:10px">
       <label><span>Univers</span>
-        <select class="infra-input" name="universe">${_uniOptions(v.universe||'opent')}</select>
+        <select class="infra-input" name="universe">${_uniOptions(v.universe||'')}</select>
       </label>
       <label><span>Société</span>
         <select class="infra-input" name="company_id">${_companyOptions(v.company_id, companies)}</select>
@@ -281,11 +282,29 @@ function _profileForm(id, profile) {
       <label><span>keep_daily</span><input class="infra-input" name="keep_daily" type="number" value="${r.keep_daily||7}"></label>
       <label><span>keep_weekly</span><input class="infra-input" name="keep_weekly" type="number" value="${r.keep_weekly||4}"></label>
       <label><span>keep_monthly</span><input class="infra-input" name="keep_monthly" type="number" value="${r.keep_monthly||0}"></label>
-      <label><span>Univers</span><select class="infra-input" name="universe">${_uniOptions(v.universe||'opent')}</select></label>
+      <label><span>Univers</span><select class="infra-input" name="universe">${_uniOptions(v.universe||'')}</select></label>
       <label><span>Tags</span><input class="infra-input" name="tags" value="${(v.tags||[]).join(', ')}"></label>
     </div>
     <div class="infra-form-row">
       <button class="infra-btn primary" onclick="_infraSaveProfile('${id}','${profile?.id||''}')">💾 Enregistrer</button>
+      <button class="infra-btn" onclick="_infraCloseForm('${id}')">Annuler</button>
+      <span class="infra-status-msg" id="${id}-status"></span>
+    </div>
+  </div>`;
+}
+
+function _endpointForm(id, ep) {
+  const v = ep || {};
+  return `
+  <div class="infra-form open" id="${id}">
+    <div class="infra-form-grid">
+      <label><span>Nom *</span><input class="infra-input" name="name" value="${v.name||''}" placeholder="mon-service" ${ep ? 'readonly' : ''}></label>
+      <label><span>URL *</span><input class="infra-input" name="url" value="${v.url||''}" placeholder="http://192.168.1.x:8080"></label>
+      <label><span>Univers</span><select class="infra-input" name="universe">${_uniOptions(v.universe||'')}</select></label>
+      <label><span>Tags (séparés par virgule)</span><input class="infra-input" name="tags" value="${(v.tags||['local']).join(', ')}"></label>
+    </div>
+    <div class="infra-form-row">
+      <button class="infra-btn primary" onclick="_infraSaveSvc('${id}','${ep?.name||''}')">💾 Enregistrer</button>
       <button class="infra-btn" onclick="_infraCloseForm('${id}')">Annuler</button>
       <span class="infra-status-msg" id="${id}-status"></span>
     </div>
@@ -500,6 +519,41 @@ window._infraCloseForm = (formId) => {
   if (wrap) wrap.remove();
 };
 
+window._infraSaveSvc = async (formId, originalName) => {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const { get } = _readForm(form);
+  const statusEl = document.getElementById(formId + '-status');
+  const payload = {
+    name:     get('name') || originalName,
+    url:      get('url'),
+    tags:     get('tags').split(',').map(t => t.trim()).filter(Boolean),
+    universe: get('universe'),
+  };
+  if (!payload.tags.length) payload.tags = ['local'];
+  if (!payload.name || !payload.url) {
+    if (statusEl) { statusEl.className = 'infra-status-msg err'; statusEl.textContent = '✗ Nom et URL sont requis'; }
+    return;
+  }
+  try {
+    await _api('POST', '/api/infra/endpoints', payload);
+    if (statusEl) { statusEl.className = 'infra-status-msg ok'; statusEl.textContent = '✓ Enregistré'; }
+    setTimeout(() => { window._infraMount?.(); }, 800);
+  } catch(e) {
+    if (statusEl) { statusEl.className = 'infra-status-msg err'; statusEl.textContent = '✗ ' + e.message; }
+  }
+};
+
+window._infraDeleteEndpoint = async (name) => {
+  if (!confirm(`Supprimer l'endpoint "${name}" ?`)) return;
+  try {
+    await _api('DELETE', '/api/infra/endpoints/' + encodeURIComponent(name));
+    window._infraMount?.();
+  } catch(e) {
+    alert('Erreur : ' + e.message);
+  }
+};
+
 // ── Page-level caches ─────────────────────────────────────────
 let _instCache = { pve: {}, pbs: {} };
 let _pbsCacheList = [];
@@ -518,7 +572,7 @@ export async function mount(container, opts = {}) {
 
   // Charger les données en parallèle
   let instances = [], pbsList = [], profiles = [], companies = [];
-  let svcList = [], svcEndpoints = [], infraPage = {}, dockerUniMap = {};
+  let svcList = [], svcEndpoints = [], infraPage = {}, dockerUniMap = {}, universesData = [];
   try {
     [instances, pbsList, profiles, svcList, svcEndpoints, infraPage, dockerUniMap] = await Promise.all([
       _api('GET', '/api/proxmox/instances').catch(() => []),
@@ -529,8 +583,10 @@ export async function mount(container, opts = {}) {
       _api('GET', '/api/page/infrastructure').catch(() => ({})),
       _api('GET', '/api/infra/docker/universes').catch(() => ({})),
     ]);
-    // Sociétés pour les selects (optionnel)
+    // Sociétés pour les selects company_id (optionnel)
     try { companies = await _api('GET', '/api/societe/companies'); } catch {}
+    // Univers réels depuis la source de vérité
+    try { universesData = (await _api('GET', '/api/universes')).universes || []; } catch {}
   } catch(e) {
     container.innerHTML = `<div style="padding:24px;color:#ef5350;font-size:.82rem">Erreur : ${e.message}</div>`;
     return;
@@ -543,15 +599,20 @@ export async function mount(container, opts = {}) {
   pbsList.forEach(p => { _instCache.pbs[p.id] = p; });
   profiles.forEach(p => { _profileCache[p.id] = p; });
 
-  // ── Univers : enrichi depuis les sociétés réelles ─────────────────────
-  _UNI = { ..._UNI_STATIC };
+  // ── Univers : depuis /api/universes (source de vérité) ───────────────
+  _UNI = {};
+  universesData.forEach(u => { if (u.id) _UNI[u.id] = { label: u.name, color: u.color || '#64748b' }; });
+  // Fallback si l'endpoint est vide ou indisponible
+  if (!Object.keys(_UNI).length) _UNI = { ..._UNI_STATIC };
   const _coUniIds = companies.map(c => c.id).filter(Boolean);
-  companies.forEach(c => { if (c.id) _UNI[c.id] = { label: c.name, color: c.color || '#64748b' }; });
 
   // ── Filtre univers : détection automatique depuis le panel actif ──────
   const _panelUni = opts.universe || container.closest('.uni-panel')?.id?.replace('uni-', '') || null;
+  // Panneaux statiques connus → liste d'univers à filtrer ; tout autre ID de panneau → filtre par cet ID
   const _PANEL_TO_UNI = { home: ['home'], co: _coUniIds, plan: [], tools: [] };
-  const _autoUnis = _panelUni ? (_PANEL_TO_UNI[_panelUni] || null) : null;
+  const _autoUnis = _panelUni
+    ? (Object.hasOwn(_PANEL_TO_UNI, _panelUni) ? _PANEL_TO_UNI[_panelUni] : [_panelUni])
+    : null;
   let _uniFilter = _autoUnis; // null = tout afficher
 
   function _filterItems(list) {
@@ -650,11 +711,15 @@ export async function mount(container, opts = {}) {
       ? '<a href="' + s.url + '" target="_blank" style="font-size:10px;color:#67e8f9;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + s.url + '">' + s.url + '</a>'
       : '<span style="font-size:10px;color:#475569;flex:1">' + (s.status||'') + '</span>';
     const typeKey = s.builtin ? 'services' : 'endpoints';
+    const deleteBtn = !s.builtin
+      ? '<button onclick="_infraDeleteEndpoint(\'' + s.name.replace(/'/g, "\\'") + '\')" style="flex-shrink:0;background:none;border:1px solid rgba(239,83,80,.4);color:#ef5350;border-radius:4px;padding:1px 6px;font-size:.72rem;cursor:pointer" title="Supprimer">✕</button>'
+      : '';
     return '<div data-universe="' + (s.universe||'') + '" style="display:flex;align-items:center;gap:7px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
       _statusDot(s.status||'unknown') +
       '<span style="font-size:.82rem;font-weight:600;color:#e2e8f0;min-width:110px">' + name + '</span>' +
       urlPart +
       _uniSelect(s.universe, typeKey, s.name) +
+      deleteBtn +
       '</div>';
   }).join('') || '<div class="infra-empty">Aucun service configuré</div>';
 
@@ -685,10 +750,14 @@ export async function mount(container, opts = {}) {
     <div class="infra-sec">
       <div class="infra-sec-hd">
         <span class="infra-sec-title">🔗 Services locaux</span>
-        <a href="#" style="font-size:.72rem;color:#67e8f9" onclick="event.preventDefault();window._infraMount && window._infraMount()">↻</a>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="infra-add-btn" onclick="_infraShowNewForm('svc')">+ Ajouter</button>
+          <a href="#" style="font-size:.72rem;color:#67e8f9" onclick="event.preventDefault();window._infraMount && window._infraMount()">↻</a>
+        </div>
       </div>
       ${warnRows}
       <div id="svc-status-list">${svcRows}</div>
+      <div id="form-new-svc-wrap"></div>
     </div>
 
     <hr class="infra-divider">
@@ -775,6 +844,8 @@ window._infraShowNewForm = (type) => {
     wrap.innerHTML = _instForm(formId, null, _companiesCache, _pbsCacheList);
   } else if (type === 'pbs') {
     wrap.innerHTML = _pbsForm(formId, null, _companiesCache);
+  } else if (type === 'svc') {
+    wrap.innerHTML = _endpointForm(formId, null);
   } else {
     wrap.innerHTML = _profileForm(formId, null);
   }

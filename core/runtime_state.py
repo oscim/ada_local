@@ -35,7 +35,7 @@ def _load_custom_endpoints() -> list[dict]:
     return []
 
 
-def add_custom_endpoint(name: str, url: str, tags: list[str] | None = None) -> None:
+def add_custom_endpoint(name: str, url: str, tags: list[str] | None = None, universe: str = "") -> None:
     """Ajoute ou met à jour un endpoint personnalisé."""
     eps = _load_custom_endpoints()
     default_tags = tags if tags is not None else ["local"]
@@ -46,9 +46,14 @@ def add_custom_endpoint(name: str, url: str, tags: list[str] | None = None) -> N
                 ep["tags"] = tags
             elif "tags" not in ep:
                 ep["tags"] = ["local"]
+            if universe is not None:
+                ep["universe"] = universe
             break
     else:
-        eps.append({"name": name, "url": url, "tags": default_tags})
+        entry: dict = {"name": name, "url": url, "tags": default_tags}
+        if universe:
+            entry["universe"] = universe
+        eps.append(entry)
     _CUSTOM_EP_FILE.parent.mkdir(parents=True, exist_ok=True)
     _CUSTOM_EP_FILE.write_text(
         json.dumps(eps, indent=2, ensure_ascii=False), encoding="utf-8"

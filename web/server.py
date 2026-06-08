@@ -1119,6 +1119,7 @@ class EndpointRequest(BaseModel):
     name: str
     url: str
     tags: list[str] = ["local"]
+    universe: str = ""
 
 
 class EndpointTagsUpdate(BaseModel):
@@ -1224,7 +1225,7 @@ async def list_custom_endpoints():
 @app.post("/api/infra/endpoints")
 async def add_custom_endpoint_api(req: EndpointRequest):
     from core.runtime_state import add_custom_endpoint
-    add_custom_endpoint(req.name.strip(), req.url.strip(), req.tags)
+    add_custom_endpoint(req.name.strip(), req.url.strip(), req.tags, req.universe or "")
     return {"ok": True}
 
 
