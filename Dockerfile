@@ -45,16 +45,12 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install -r "${ADA_REQUIREMENTS_FILE}"
 
 COPY . /app
+COPY default /opt/ada-seed
 COPY docker/entrypoint.sh /usr/local/bin/ada-entrypoint
+
 RUN chmod +x /usr/local/bin/ada-entrypoint \
     && mkdir -p /app/data /app/skills /app/documents /app/rag /app/models /app/.cache /app/web/certs \
-    && mkdir -p /opt/ada-seed/data /opt/ada-seed/skills /opt/ada-seed/documents /opt/ada-seed/rag /opt/ada-seed/models /opt/ada-seed/web/certs \
-    && if [ -d /app/data ]; then cp -a /app/data/. /opt/ada-seed/data/ 2>/dev/null || true; fi \
-    && if [ -d /app/skills ]; then cp -a /app/skills/. /opt/ada-seed/skills/ 2>/dev/null || true; fi \
-    && if [ -d /app/documents ]; then cp -a /app/documents/. /opt/ada-seed/documents/ 2>/dev/null || true; fi \
-    && if [ -d /app/rag ]; then cp -a /app/rag/. /opt/ada-seed/rag/ 2>/dev/null || true; fi \
-    && if [ -d /app/models ]; then cp -a /app/models/. /opt/ada-seed/models/ 2>/dev/null || true; fi \
-    && if [ -d /app/web/certs ]; then cp -a /app/web/certs/. /opt/ada-seed/web/certs/ 2>/dev/null || true; fi
+    && mkdir -p /opt/ada-seed/data /opt/ada-seed/skills /opt/ada-seed/documents /opt/ada-seed/rag /opt/ada-seed/models /opt/ada-seed/web/certs
 
 EXPOSE 7654 7655
 

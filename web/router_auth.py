@@ -142,7 +142,7 @@ async def get_qr(request: Request, device_name: str = "Nouvel appareil"):
 async def qr_status(session_token: str):
     """Polling : retourne le JWT quand la session QR est confirmée."""
     if not settings.get("auth.enabled", False):
-        raise HTTPException(status_code=404)
+        return {"status": "disabled"}
 
     db_init()
     pending = get_pending_qr_by_session(session_token)

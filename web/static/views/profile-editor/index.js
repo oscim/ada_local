@@ -57,8 +57,8 @@ async function _loadAll() {
       fetch('/api/admin/devices', { headers: h }).then(r => r.json()).catch(() => []),
     ]);
     _modules   = mRes.modules   || mRes   || [];
-    _universes = uRes.universes || uRes   || [];
-    _profiles  = pRes.profiles  || pRes   || [];
+    _universes = uRes.universes || (Array.isArray(uRes) ? uRes : Object.values(uRes)) || [];
+    _profiles  = pRes.profiles  || (Array.isArray(pRes) ? pRes : Object.values(pRes)) || [];
     _devices   = Array.isArray(dRes) ? dRes : (dRes.devices || []);
   } catch (e) {
     showToast('Erreur chargement : ' + e.message);

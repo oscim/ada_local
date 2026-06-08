@@ -13,12 +13,12 @@ services:
     volumes:
       # Recommandé : données persistantes hors conteneur.
       # Le conteneur sait fonctionner sans ces volumes, mais les données seraient jetables.
-      - ./data:/app/data
-      - ./skills:/app/skills
-      - ./documents:/app/documents
-      - ./rag:/app/rag
-      - ./models:/app/models
-      - ./web/certs:/app/web/certs
+      - ${ADA_EXTERNAL_DATA_DIR}/data:/app/data
+      - ${ADA_EXTERNAL_DATA_DIR}/skills:/app/skills
+      - ${ADA_EXTERNAL_DATA_DIR}/documents:/app/documents
+      - ${ADA_EXTERNAL_DATA_DIR}/rag:/app/rag
+      - ${ADA_EXTERNAL_DATA_DIR}/models:/app/models
+      - ${ADA_EXTERNAL_DATA_DIR}/web/certs:/app/web/certs
       - ada-cache:/app/.cache
     extra_hosts:
       # Utile sous Linux si Ollama ou n8n tournent sur la machine hôte.

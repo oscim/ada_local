@@ -76,14 +76,11 @@ async function _api(method, path, body) {
   return r.json();
 }
 
-// ── Universe meta ─────────────────────────────────────────────
-
-const _UNI = {
-  opent: { label: 'OpenTechno', color: '#00d4ff' },
-  home:  { label: 'Maison',     color: '#a78bfa' },
-  uscss: { label: 'USCSS',      color: '#f59e0b' },
-  margep:{ label: 'MargePro',   color: '#4ade80' },
+// ── Universe meta — construit dynamiquement depuis les sociétés ──
+const _UNI_STATIC = {
+  home: { label: 'Maison', color: '#a78bfa' },
 };
+let _UNI = { ..._UNI_STATIC };
 
 // ── Status dot ────────────────────────────────────────────────
 
@@ -546,10 +543,14 @@ export async function mount(container, opts = {}) {
   pbsList.forEach(p => { _instCache.pbs[p.id] = p; });
   profiles.forEach(p => { _profileCache[p.id] = p; });
 
+  // ── Univers : enrichi depuis les sociétés réelles ─────────────────────
+  _UNI = { ..._UNI_STATIC };
+  const _coUniIds = companies.map(c => c.id).filter(Boolean);
+  companies.forEach(c => { if (c.id) _UNI[c.id] = { label: c.name, color: c.color || '#64748b' }; });
+
   // ── Filtre univers : détection automatique depuis le panel actif ──────
   const _panelUni = opts.universe || container.closest('.uni-panel')?.id?.replace('uni-', '') || null;
-  // Mapping panel-slug → universe IDs stockés sur les instances
-  const _PANEL_TO_UNI = { home: ['home'], co: ['opent','uscss','margep'], plan: [], tools: [] };
+  const _PANEL_TO_UNI = { home: ['home'], co: _coUniIds, plan: [], tools: [] };
   const _autoUnis = _panelUni ? (_PANEL_TO_UNI[_panelUni] || null) : null;
   let _uniFilter = _autoUnis; // null = tout afficher
 

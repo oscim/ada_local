@@ -123,11 +123,31 @@ function _stopPoll() {
 async function _poll() {
   if (!_sessionToken) return;
   try {
-    const r    = await fetch(`/api/auth/qr/status?session_token=${_sessionToken}`);
+    const r = await fetch(`/api/auth/qr/status?session_token=${_sessionToken}`);
+
+    if (!r.ok) {
+      _stopPoll();
+      if (r.status === 404) {
+        const cfg = await fetch('/api/auth/config').then(c => c.json()).catch(() => ({ enabled: false }));
+        if (!cfg.enabled) {
+          location.reload();
+        } else {
+          const msg = document.getElementById('auth-status');
+          if (msg) { msg.textContent = 'Session expirée — régénération…'; msg.className = 'auth-status warn'; }
+          setTimeout(() => _loadQR(document.querySelector('.auth-wrap')?.parentElement), 1200);
+        }
+      }
+      return;
+    }
+
     const data = await r.json();
     const msg  = document.getElementById('auth-status');
 
-    if (data.status === 'confirmed') {
+    if (data.status === 'disabled') {
+      _stopPoll();
+      location.reload();
+
+    } else if (data.status === 'confirmed') {
       _stopPoll();
       _setToken(data.token);
       if (msg) { msg.textContent = '✅ Connecté — chargement…'; msg.className = 'auth-status ok'; }

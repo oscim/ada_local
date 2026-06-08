@@ -1,0 +1,18 @@
+[
+  {
+    "id": "weekly-homelab",
+    "label": "Hebdo — Homelab",
+    "storage": "local",
+    "compress": "zstd",
+    "mode": "snapshot",
+    "retention": {
+      "keep_last": 2,
+      "keep_weekly": 2
+    },
+    "schedule": "0 3 * * 0",
+    "universe": "home",
+    "tags": [
+      "homelab"
+    ]
+  }
+]

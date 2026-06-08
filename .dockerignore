@@ -25,3 +25,14 @@ rag
 models
 web/certs
 .cache
+data/
+skills/
+documents/
+rag/
+models/
+web/certs/
+*.sqlite
+*.sqlite3
+*.db
+.env
+.env.*
