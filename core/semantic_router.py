@@ -380,10 +380,10 @@ _router = EmbeddingRouter()
 
 
 _FUNCTION_KEYWORDS = re.compile(
-    # verb root (handles imperative, infinitive, past participle, conjugated)
-    r"\b(allum\w*|étein\w*|coupez?|baiss\w*|augment\w*)\b.{0,50}"
+    # verb root — accented AND unaccented variants (user may type without accent)
+    r"\b(allum\w*|[eé]tein\w*|coupez?|baiss\w*|augment\w*)\b.{0,50}"
     r"\b(lumi[eè]res?|lumieres?|lamp[e]s?|led)\b"
-    r"|\b(lumi[eè]res?|lumieres?|lamp[e]s?)\b.{0,30}\b(allum\w*|étein\w*|coupez?|baiss\w*)\b",
+    r"|\b(lumi[eè]res?|lumieres?|lamp[e]s?)\b.{0,30}\b(allum\w*|[eé]tein\w*|coupez?|baiss\w*)\b",
     re.IGNORECASE,
 )
 
@@ -415,12 +415,28 @@ _VISION_KEYWORDS = re.compile(
 )
 
 
+_LIGHT_ACTION_WORDS = (
+    "allume", "eteins", "éteins", "etein", "étein",
+    "allumer", "eteindre", "éteindre",
+    "coupe", "couper", "baisse", "baisser", "augmente", "augmenter",
+)
+_LIGHT_NOUNS = ("lumiere", "lumière", "lumieres", "lumières", "lampe", "lampes", "led")
+
+
 def get_route(prompt: str) -> str:
     """
     Route a prompt to one of the VALID_ROUTES.
     Public interface — identical signature to the previous keyword router.
     """
-    # Vision guard first — "regarde le bureau" must not bleed into function_gemma
+    p_lower = prompt.lower()
+
+    # Pré-garde lumière : si le message contient un verbe d'action ET un mot lumière
+    # → function_gemma immédiatement, avant tout (évite le drift embedding sur "bureau")
+    words = set(re.split(r"\W+", p_lower))
+    if words & set(_LIGHT_ACTION_WORDS) and words & set(_LIGHT_NOUNS):
+        return "function_gemma"
+
+    # Vision guard — "regarde le bureau" must not bleed into function_gemma
     if _VISION_KEYWORDS.search(prompt):
         return "vision"
     # Fast keyword guard for music commands — beats embedding drift
@@ -447,3 +463,33 @@ def warmup() -> None:
         logger.info("[SemanticRouter] Ready (embedding router, nomic-embed-text).")
     else:
         logger.warning("[SemanticRouter] Ready (keyword fallback — Ollama unavailable).")
+
+
+def inject_plugin_utterances(extra: dict[str, list[str]]) -> None:
+    """
+    Fusionne des utterances supplémentaires dans _ROUTES (et le _KeywordFallback).
+    Appelé au démarrage après register_enabled_plugins().
+    Invalide le cache d'embeddings pour forcer le recalcul.
+    """
+    if not extra:
+        return
+    for route, utterances in extra.items():
+        if route in _ROUTES:
+            _ROUTES[route].extend(utterances)
+        else:
+            _ROUTES[route] = list(utterances)
+    _invalidate_embedding_cache()
+    # Reconstruire le _KeywordFallback avec les nouvelles utterances
+    _router._keyword = _KeywordFallback()
+    logger.info(
+        "[SemanticRouter] inject_plugin_utterances: %d routes, %d utterances ajoutées",
+        len(extra),
+        sum(len(v) for v in extra.values()),
+    )
+
+
+def _invalidate_embedding_cache() -> None:
+    """Vide le cache d'embeddings pour forcer le recalcul au prochain appel route()."""
+    with _router._lock:
+        _router._cache = {}
+        _router._last_retry = 0.0

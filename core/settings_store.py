@@ -8,7 +8,23 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from PySide6.QtCore import QObject, Signal
+try:
+    from PySide6.QtCore import QObject, Signal
+    _QT_AVAILABLE = True
+except ImportError:
+    _QT_AVAILABLE = False
+
+    class _NoSignal:
+        """No-op Signal stub when PySide6 is not available."""
+        def __init__(self, *args): pass
+        def emit(self, *args): pass
+        def connect(self, *args): pass
+        def disconnect(self, *args): pass
+
+    Signal = _NoSignal  # type: ignore
+
+    class QObject:  # type: ignore
+        pass
 
 
 # Default settings - used when no settings file exists
@@ -109,6 +125,45 @@ DEFAULT_SETTINGS = {
         "print3d": True,
         "music": True,
         "bibliotheque": True,
+        "proxmox": True,
+        "rmm": True,
+    },
+    # MODULE_DOCUMENTS: base documentaire RAG locale (Markdown + SQLite FTS5)
+    "documents": {
+        "enabled": False,
+        "root_path": "",
+        "require_mount": True,
+        "expected_mount_path": "",
+        "expected_device_hint": "",
+        "index_path": "",
+        "extensions": [".md"],
+        "ignore_dirs": [".git", "node_modules", "__pycache__", ".venv", "venv"],
+        "auto_index_on_startup": True,
+        "chunk_size": 1200,
+        "chunk_overlap": 200,
+        "max_context_chunks": 6,
+        "max_context_chars": 9000,
+        "min_query_length": 3,
+        "include_sources_in_answer": True,
+    },
+    # MODULE_AUTOSKILLS: mémoire procédurale adaptative SQLite/FTS5
+    "autoskills": {
+        "enabled": True,
+        "inject_enabled": True,
+        "generate_enabled": True,
+        "min_turns": 4,
+        "min_content_len": 100,
+        "min_confidence": 0.62,
+        "max_injected": 5,
+        "max_generation_history": 20,
+        "cooldown_minutes": 10,
+        "default_domain": "auto",
+        "allow_core_domain_auto_write": False,
+        "archive_after_days": 30,
+        "auto_promote_threshold": 2,
+        "generation_model": "",
+        "merge_model": "",
+        "debug": False,
     },
 }
 

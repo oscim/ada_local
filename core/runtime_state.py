@@ -118,6 +118,52 @@ def update_service_tags(name: str, tags: list) -> bool:
     _save_service_overrides(overrides)
     return True
 
+def update_service_universe(name: str, universe: str) -> bool:
+    overrides = _load_service_overrides()
+    overrides.setdefault(name, {})['universe'] = universe or ''
+    _save_service_overrides(overrides)
+    return True
+
+
+def update_endpoint_universe(name: str, universe: str) -> bool:
+    eps = _load_custom_endpoints()
+    for ep in eps:
+        if ep['name'] == name:
+            ep['universe'] = universe or ''
+            _CUSTOM_EP_FILE.write_text(
+                json.dumps(eps, indent=2, ensure_ascii=False), encoding='utf-8'
+            )
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Docker container universe mapping
+# ---------------------------------------------------------------------------
+_DOCKER_UNI_FILE = Path(__file__).parent.parent / "config" / "docker_universe.json"
+
+
+def _load_docker_universe() -> dict:
+    """Charge la map container_name → universe depuis config/docker_universe.json."""
+    try:
+        if _DOCKER_UNI_FILE.exists():
+            return json.loads(_DOCKER_UNI_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def update_docker_universe(name: str, universe: str) -> bool:
+    uni_map = _load_docker_universe()
+    if universe:
+        uni_map[name] = universe
+    else:
+        uni_map.pop(name, None)
+    _DOCKER_UNI_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _DOCKER_UNI_FILE.write_text(
+        json.dumps(uni_map, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return True
 
 # ---------------------------------------------------------------------------
 # Individual check functions — each returns a dict, never raises

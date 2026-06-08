@@ -2,7 +2,20 @@
 Centralized configuration for Pocket AI.
 """
 
+# --- Radar Local Event Console ---
+RADAR_ENABLED: bool = True
+RADAR_DB_PATH: str = "data/radar/events.sqlite"
+RADAR_MAX_EVENTS: int = 100_000
+RADAR_RETENTION_DAYS: int = 30
+RADAR_TEXT_PREVIEW_MAX: int = 300
+RADAR_SENSITIVE_FIELDS: list = [
+    "api_key", "token", "access_token", "refresh_token",
+    "authorization", "password", "secret", "cookie",
+    "session_cookie", "private_key",
+]
+
 # --- Model Configuration ---
+RESPONDER_MODEL = "mistral:latest"
 RESPONDER_MODEL = "mistral:latest"
 OLLAMA_URL = "http://localhost:11434/api"
 
@@ -26,7 +39,29 @@ def _load_margepro_context() -> str:
         return ""
 
 MARGEPRO_CONTEXT = _load_margepro_context()
+
+# --- Marketing / MargePro ---
+# Modèle utilisé pour la génération marketing (peut être différent du modèle principal)
+# Ex : "deepseek-r1:7b", "mistral:7b", "llama3.1:8b" pour de meilleures copies
+MARKETING_MODEL = RESPONDER_MODEL  # Même modèle par défaut, remplace si besoin
+
+# Contexte produit MargePro — chargé dynamiquement depuis skills/margepro/SKILL.md
+# Édite ce fichier depuis l'onglet Compétences de l'UI pour mettre à jour le contexte.
+def _load_margepro_context() -> str:
+    import re as _re
+    from pathlib import Path as _Path
+    skill_path = _Path(__file__).parent / "skills" / "margepro" / "SKILL.md"
+    try:
+        raw = skill_path.read_text(encoding="utf-8")
+        # Retire le frontmatter YAML (entre les deux ---)
+        m = _re.match(r"^---[ \t]*\r?\n.*?\r?\n---[ \t]*\r?\n(.*)", raw, _re.DOTALL)
+        return m.group(1).strip() if m else raw.strip()
+    except Exception:
+        return ""
+
+MARGEPRO_CONTEXT = _load_margepro_context()
 LOCAL_ROUTER_PATH = "./merged_model"
+HF_ROUTER_REPO = "nlouis/pocket-ai-router"  # Hugging Face repo for auto-download
 HF_ROUTER_REPO = "nlouis/pocket-ai-router"  # Hugging Face repo for auto-download
 MAX_HISTORY = 20
 
@@ -55,8 +90,34 @@ STT_RECORD_TIMEOUT = 5.0  # Maximum seconds to record after wake word
 VOICE_ASSISTANT_ENABLED = True
 QWEN_TIMEOUT_SECONDS = 300  # 5 minutes of inactivity before sleep
 QWEN_KEEP_ALIVE = "5m"  # Keep in memory for 5 minutes after last use
+TTS_VOICE_MODEL = "en_GB-northern_english_male-medium"
+TTS_MODEL_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx"
+TTS_CONFIG_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/northern_english_male/medium/en_GB-northern_english_male-medium.onnx.json"
+
+# --- STT Configuration ---
+# Using RealTimeSTT for real-time speech-to-text
+STT_MODEL_PATH = None  # Not used with RealTimeSTT (kept for compatibility)
+STT_USE_WHISPER = False  # Not used with RealTimeSTT (kept for compatibility)
+WHISPER_MODEL_SIZE = "base"  # Not used with RealTimeSTT (kept for compatibility)
+WAKE_WORD_DETECTION_METHOD = "transcription"  # RealTimeSTT uses transcription-based detection
+REALTIMESTT_MODEL = "base"  # RealTimeSTT model: "tiny", "base", "small", "medium", "large"
+USE_PORCUPINE_WAKE_WORD = False  # Use Porcupine for wake word detection (more accurate, requires API key)
+PORCUPINE_ACCESS_KEY = None  # Get from https://console.picovoice.ai/ (optional, for better wake word detection)
+WAKE_WORD = "jarvis"
+WAKE_WORD_SENSITIVITY = 0.4  # For audio pattern matching (0.0-1.0, higher = more sensitive) - Lowered to reduce false positives
+WAKE_WORD_CONFIRMATION_COUNT = 1  # Require multiple detections before triggering (reduces false positives)
+STT_SAMPLE_RATE = 16000
+STT_CHUNK_SIZE = 4096
+STT_RECORD_TIMEOUT = 5.0  # Maximum seconds to record after wake word
+
+# --- Voice Assistant Configuration ---
+VOICE_ASSISTANT_ENABLED = True
+QWEN_TIMEOUT_SECONDS = 300  # 5 minutes of inactivity before sleep
+QWEN_KEEP_ALIVE = "5m"  # Keep in memory for 5 minutes after last use
 
 # --- Router Keywords ---
+# REMOVED: ROUTER_KEYWORDS - All queries now go through Function Gemma router
+# The router handles all routing decisions, so keyword-based bypass is no longer needed
 # REMOVED: ROUTER_KEYWORDS - All queries now go through Function Gemma router
 # The router handles all routing decisions, so keyword-based bypass is no longer needed
 
@@ -135,6 +196,21 @@ FUNCTIONS = [
                     "filter": {"type": "string", "description": "Optional filter like meetings or appointments"}
                 },
                 "required": ["date"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "shell_exec",
+            "description": "Execute a PowerShell or shell command on the local system. Use for: listing files, checking system info, running scripts, managing processes, checking network, installing packages, or any system operation the user requests explicitly.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "The PowerShell/shell command to execute"},
+                    "timeout": {"type": "integer", "description": "Timeout in seconds (default 30, max 120)"}
+                },
+                "required": ["command"]
             }
         }
     },

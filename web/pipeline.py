@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sys
+import time as _time
+import uuid as _uuid
 from typing import AsyncGenerator
 
 import httpx
@@ -83,6 +85,27 @@ _INFRA_TRIGGERS = frozenset(
         "etat de l infrastructure",
         "infrastructure",
     }
+)
+
+# Routing déterministe pour lister les VMs / CTs Proxmox
+# Exemples : "liste les VM", "liste mes CT de ot-mutu", "affiche les containers", "montre les VMs"
+_PROXMOX_VM_LIST_RE = re.compile(
+    r"\b(liste[rz]?|affiche[rz]?|montre[rz]?|show|donne[rz]?|voir|quels?|combien)\b"
+    r".*\b(vm|vms|ct|cts|lxc|qemu|container|conteneur|machine[s]?\s+virtuelle[s]?)\b",
+    re.IGNORECASE,
+)
+
+# Routing déterministe : backup Proxmox → génère directement une carte de confirmation
+# Exemples : "backup vm 112", "sauvegarde CT 105", "lance un backup de 112 sur nas-backup"
+_PROXMOX_BACKUP_RE = re.compile(
+    r"\b(backup|sauvegarder?|sauvegarde)\b.*\b(?:vm|ct|lxc|conteneur)?\s*(\d{2,4})\b",
+    re.IGNORECASE,
+)
+# Routing déterministe : power VM (start/stop/reboot) → carte de confirmation
+_PROXMOX_POWER_RE = re.compile(
+    r"\b(start|démarre[rz]?|stop|arrête[rz]?|éteins?|reboot|redémarre[rz]?)\b"
+    r".*\b(?:vm|ct|lxc|conteneur)?\s*(\d{2,4})\b",
+    re.IGNORECASE,
 )
 
 # Regex de routing déterministe pour la création de timers
@@ -311,6 +334,19 @@ _DOMOTIQUE_TRIGGERS = (
     "volet", "volets", "portail", "thermostat",
 )
 
+# Patterns déterministes pour l'état des entités (évitent le LLM)
+_STATE_QUERY_PATTERNS = (
+    re.compile(r"quell?es?\s+(lumi[eè]res?|lumi[eè]re|switch|switches|prise[s]?|appareil[s]?|lampe[s]?)\s+(sont\s+)?(allum[ée]e?s?|on\b)", re.IGNORECASE),
+    re.compile(r"quell?es?\s+(lumi[eè]res?|lumi[eè]re|switch|switches|prise[s]?|appareil[s]?|lampe[s]?)\s+(sont\s+)?(éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?|lampes?)\s+(allum[ée]e?s?|on\b)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?|lampes?)\s+(éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(liste|montre|affiche|donne[- ]moi)\s+(les\s+)?(lumi[eè]res?|switch|prises?|appareils?)\s+(allum[ée]e?s?|éteint[es]?|on\b|off\b)", re.IGNORECASE),
+    re.compile(r"état\s+des?\s+(lumi[eè]res?|switch|prises?|appareils?)", re.IGNORECASE),
+    re.compile(r"(lumi[eè]res?|switch|prises?|appareils?)\s+(qui\s+)(sont\s+)?(allum[ée]e?s?|éteint[es]?|on\b|off\b)", re.IGNORECASE),
+    re.compile(r"quoi\s+(est|sont)\s+(allum[ée]e?s?|on\b|éteint[es]?|off\b)", re.IGNORECASE),
+    re.compile(r"(il y a quoi|qu['']est[- ]ce qui)\s+(est\s+)?(allum[ée]e?|on\b)", re.IGNORECASE),
+)
+
 
 # ---------------------------------------------------------------------------
 # Agent web Playwright (pipeline version — sans SSE, yield chunks)
@@ -345,6 +381,7 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
             )
             page = await ctx.new_page()
             history: list[dict] = []
+            _visited_urls: list[str] = []  # URLs non-Google visitées par l'agent
 
             for step in range(1, MAX_STEPS + 1):
                 try:
@@ -406,14 +443,28 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
 
                 if action_name in ("done", "extract"):
                     result = action.get("result", reply)
+                    # Ajouter les sources si l'agent ne les a pas citées
+                    if _visited_urls:
+                        _src_lower = result.lower()
+                        if "source" not in _src_lower and "http" not in _src_lower:
+                            _urls_str = "\n".join(f"- {u}" for u in _visited_urls[:5])
+                            result += f"\n\n📎 **Sources :**\n{_urls_str}"
                     await browser.close()
                     yield result
                     return
 
                 try:
                     if action_name == "navigate":
+                        _nav_url = action.get("url", "")
+                        # Mémoriser les pages de contenu (pas les SERP Google)
+                        if (_nav_url
+                                and "google.com/search" not in _nav_url
+                                and "google.fr/search" not in _nav_url
+                                and "bing.com/search" not in _nav_url
+                                and _nav_url not in _visited_urls):
+                            _visited_urls.append(_nav_url)
                         await page.goto(
-                            action.get("url", ""),
+                            _nav_url,
                             wait_until="domcontentloaded",
                             timeout=15_000,
                         )
@@ -447,14 +498,103 @@ async def _web_agent_search(instruction: str) -> AsyncGenerator[str, None]:
         yield f"Erreur lors de la recherche web : {e}"
 
 
-def _system_prompt() -> str:
-    return (
+def _system_prompt(plugin_context_id: str | None = None) -> str:
+    """System prompt de base, enrichi des capacités des plugins actifs."""
+    base = (
         "Tu es ADA, une assistante IA locale. "
         "Réponds TOUJOURS en français. "
         "RÈGLE ABSOLUE : réponses courtes, 1 à 3 phrases max. "
         "Pas d'intro, pas de conclusion, pas de présentation de toi-même. "
-        "Va directement à la réponse."
+        "Va directement à la réponse. "
+        "RÈGLE SOURCES OBLIGATOIRE : si des documents de référence ou des résultats "
+        "de recherche web sont fournis dans le contexte, tu DOIS citer les sources "
+        "à la fin de ta réponse sous la forme \"📎 Sources : nom_fichier_ou_url\". "
+        "Ne jamais omettre les sources quand elles sont disponibles."
     )
+    try:
+        from core.plugin_registry import plugin_registry as _pr
+        injection = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
+        if injection:
+            base += f"\n\n### Capacités disponibles ###\n{injection}"
+    except Exception:
+        pass
+    return base
+
+
+def _format_entity_state_answer(user_text: str) -> str | None:
+    """
+    Répond directement (sans LLM) aux questions sur l'état des entités.
+    Retourne None si la question ne correspond pas à un pattern d'état.
+    """
+    text_lower = user_text.lower()
+
+    # Détecter si la question porte sur les allumés ou les éteints
+    want_on: bool | None = None
+    if any(w in text_lower for w in ("allumé", "allumée", "allumées", "allumés", " on ", "qui sont on")):
+        want_on = True
+    elif any(w in text_lower for w in ("éteint", "éteinte", "éteintes", "éteints", " off ", "qui sont off")):
+        want_on = False
+    if text_lower.rstrip("? !").endswith(("allumé", "allumée", "allumées", "allumés", "on")):
+        want_on = True
+    if text_lower.rstrip("? !").endswith(("éteint", "éteinte", "éteintes", "éteints", "off")):
+        want_on = False
+
+    # Vérifier si un pattern regex correspond
+    matched = any(p.search(user_text) for p in _STATE_QUERY_PATTERNS)
+    # Fallback : lumière + (allumé|éteint) dans le même message
+    if not matched:
+        has_light_kw = any(w in text_lower for w in ("lumière", "lumières", "lumiere", "lumieres", "lampe", "lampes"))
+        has_state_kw = any(w in text_lower for w in ("allumé", "allumée", "allumées", "allumés", "éteint", "éteinte", "éteintes", "éteints"))
+        if has_light_kw and has_state_kw:
+            matched = True
+
+    if not matched:
+        return None
+
+    try:
+        from core.unified_entities import unified_entity_service
+        entities = unified_entity_service.get_unified_entities(force_refresh=True)
+    except Exception as ex:
+        return f"❌ Impossible de récupérer les entités domotiques : {ex}"
+
+    # Filtrer par type — en Domoticz les lumières sont souvent des switch/scene
+    TYPE_FILTER: list[str] = []
+    if any(w in text_lower for w in ("switch", "switches", "prise", "prises")):
+        TYPE_FILTER = ["switch"]
+    elif any(w in text_lower for w in ("lumière", "lumières", "lumiere", "lumieres", "lampe", "lampes")):
+        # Les lumières peuvent être light, switch ou scene selon le provider
+        TYPE_FILTER = ["light", "switch", "scene"]
+    # Sinon : pas de filtre → tous les types contrôlables
+
+    filtered = [
+        e for e in entities
+        if (not TYPE_FILTER or e.type in TYPE_FILTER)
+        and (want_on is None or (e.state == "on") == want_on)
+    ]
+
+    if want_on is True:
+        state_label, icon = "allumées", "💡"
+    elif want_on is False:
+        state_label, icon = "éteintes", "🌑"
+    else:
+        state_label, icon = "actives", "📊"
+
+    type_label = ""
+    if TYPE_FILTER == ["switch"]:
+        type_label = "prises/switches "
+
+    if not filtered:
+        return f"Aucune {type_label}entité {state_label} en ce moment."
+
+    lines = [f"{icon} **{len(filtered)} {type_label}entité{'s' if len(filtered) > 1 else ''} {state_label} :**\n"]
+    for e in filtered:
+        zone = f" *[{e.zone}]*" if e.zone and e.zone != "Other" else ""
+        extras = []
+        if e.attributes and e.attributes.get("brightness") is not None:
+            extras.append(f"{round(e.attributes['brightness'] / 2.55)}%")
+        extra_str = f" ({', '.join(extras)})" if extras else ""
+        lines.append(f"- **{e.name}**{zone}{extra_str}")
+    return "\n".join(lines)
 
 
 def _format_entities_context() -> str:
@@ -545,58 +685,211 @@ async def _call_llm(messages: list[dict], thinking: bool = False) -> str:
         return r.json().get("message", {}).get("content", "").strip()
 
 
-async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
-    """Tool-calling aligné avec l'app: outils complets + fallback passthrough."""
+def _extract_func_call(text: str, func_defs: list[dict]) -> tuple[str, dict]:
+    """
+    Fallback : tente de détecter un appel de fonction dans le texte brut du LLM
+    quand tool_calls est vide (ex: Mistral qui génère du texte Python au lieu de JSON).
+    """
+    known = {f["function"]["name"] for f in func_defs}
+    m = re.search(r'\b([a-z_]+)\s*\(', text)
+    if m and m.group(1) in known:
+        func_name = m.group(1)
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(text) and depth > 0:
+            if text[i] == '(':
+                depth += 1
+            elif text[i] == ')':
+                depth -= 1
+            if depth > 0:
+                i += 1
+        args_str = text[start:i].strip()
+        params: dict = {}
+        if args_str:
+            if args_str.startswith('{'):
+                try:
+                    params = json.loads(args_str)
+                except Exception:
+                    pass
+            else:
+                first_arg = args_str.strip('"\'').split(',')[0].strip('"\'').strip()
+                if first_arg:
+                    params = {"instance_id": first_arg}
+        return func_name, params
+    return "", {}
+
+
+async def _stream_with_tools(
+    text: str,
+    conversation_messages: list[dict],
+    plugin_context_id: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """
+    Version streaming de l'ancien _call_with_tools.
+    Yield :
+      - '\x00think\x00<msg>' : étapes de réflexion visibles
+      - '{"__type": "confirm_required", ...}' : carte de confirmation
+      - chunks de texte : réponse finale (streamée depuis Ollama)
+    """
+    from config import FUNCTIONS as _FUNCTIONS
+    from core.plugin_registry import plugin_registry as _pr
+    from core.n8n_executor import n8n_executor
+
+    plugin_functions = _pr.combined_function_definitions()
+    effective_functions = _FUNCTIONS + plugin_functions
+
+    plugin_sys = _pr.combined_system_prompt_injection(context_id=plugin_context_id)
+    dispatcher_system = (
+        "You are a function dispatcher. You MUST call one of the available tools. "
+        "NEVER respond with plain text. "
+        "For greetings or conversational questions: call passthrough.\n\n"
+        "Tool selection rules:\n"
+        "- control_light: ANY light/lamp/room lighting request\n"
+        "- set_timer: countdown timers\n"
+        "- shell_exec: system commands\n"
+        "- web_search: internet searches\n"
+        "- passthrough: ONLY for pure chitchat or greetings with NO possible action.\n"
+        "- vm_list: ANY request to list, show, display VMs, CTs, containers, machines on Proxmox\n"
+        "- vm_power: start/stop/reboot a VM or CT\n"
+        "- vm_backup: backup/save a VM or CT\n"
+        "- node_stats: stats, resources, CPU, RAM of a Proxmox node\n"
+        "- For any other plugin function listed in 'Active plugin capabilities' below: use it when appropriate.\n\n"
+        "IMPORTANT: If you cannot use the tool_calls format, respond with ONLY this JSON and nothing else:\n"
+        '{"function": "function_name", "arguments": {"key": "value"}}'
+    )
+    if plugin_sys:
+        dispatcher_system += f"\n\nActive plugin capabilities:\n{plugin_sys}"
+
+    yield "\x00think\x00🔍 Sélection de l'outil…"
+
     try:
         async with httpx.AsyncClient(timeout=150.0) as client:
             r = await client.post(
                 _chat_url(),
                 json={
-                    "model": _chat_model(),
-                    "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a function dispatcher. You MUST call one of the available tools. "
-                                "NEVER respond with plain text. "
-                                "For greetings or conversational questions: call passthrough."
-                            ),
-                        },
-                        {"role": "user", "content": text},
+                    "model":      _chat_model(),
+                    "messages":   [
+                        {"role": "system", "content": dispatcher_system},
+                        {"role": "user",   "content": text},
                     ],
-                    "tools": FUNCTIONS,
-                    "stream": False,
-                    "think": False,
+                    "tools":      effective_functions,
+                    "stream":     False,
+                    "think":      False,
                     "keep_alive": "5m",
                 },
             )
             r.raise_for_status()
-            tool_calls = r.json().get("message", {}).get("tool_calls", [])
+            msg = r.json().get("message", {})
+            tool_calls = msg.get("tool_calls", [])
     except Exception:
-        return await _call_llm(conversation_messages, thinking=False)
+        async for chunk in _stream_ollama(conversation_messages, thinking=False):
+            yield chunk
+        return
+
+    func_name = ""
+    params: dict = {}
 
     if not tool_calls:
-        return await _call_llm(conversation_messages, thinking=False)
-
-    call = tool_calls[0]
-    func_name = call.get("function", {}).get("name", "")
-    params = call.get("function", {}).get("arguments", {}) or {}
+        # Fallback 1 : détecter func_name(...) dans le texte généré
+        raw_text = msg.get("content", "")
+        func_name, params = _extract_func_call(raw_text, effective_functions)
+        if not func_name:
+            # Fallback 2 : détecter {"function": "...", "arguments": {...}} dans le texte
+            try:
+                m = re.search(r'\{[^{}]*"function"\s*:\s*"([^"]+)"[^{}]*\}', raw_text, re.DOTALL)
+                if not m:
+                    # Essai plus large avec objets imbriqués
+                    m = re.search(r'\{.*?"function"\s*:\s*"([^"]+)".*?\}', raw_text, re.DOTALL)
+                if m:
+                    parsed_json = json.loads(m.group())
+                    fn = parsed_json.get("function", "")
+                    known_names = {f["function"]["name"] for f in effective_functions}
+                    if fn in known_names:
+                        func_name = fn
+                        params = parsed_json.get("arguments", {}) or {}
+            except Exception:
+                pass
+        if func_name:
+            yield f"\x00think\x00🔧 Outil détecté : `{func_name}`"
+        else:
+            async for chunk in _stream_ollama(conversation_messages, thinking=False):
+                yield chunk
+            return
+    else:
+        call = tool_calls[0]
+        func_name = call.get("function", {}).get("name", "")
+        params = call.get("function", {}).get("arguments", {}) or {}
 
     if func_name == "passthrough":
         thinking = bool(params.get("thinking", False))
-        return await _call_llm(conversation_messages, thinking=thinking)
+        async for chunk in _stream_ollama(conversation_messages, thinking=thinking):
+            yield chunk
+        return
 
-    result = function_executor.execute(func_name, params)
-    success = result.get("success", False)
+    # ── Vérification confirmation requise ─────────────────────────────────────
+    func_def = next(
+        (f for f in effective_functions if f["function"]["name"] == func_name),
+        None,
+    )
+    if func_def and func_def["function"].get("x_confirm_required"):
+        confirm_msg = func_def["function"].get(
+            "x_confirm_message", f"Confirmer {func_name} ?"
+        )
+        confirm_cmd = func_def["function"].get("x_confirm_cmd", "")
+        try:
+            confirm_msg = confirm_msg.format(**params)
+        except Exception:
+            pass
+        try:
+            if confirm_cmd:
+                confirm_cmd = confirm_cmd.format(**params)
+        except Exception:
+            pass
+        yield json.dumps({
+            "__type":  "confirm_required",
+            "func":    func_name,
+            "message": confirm_msg,
+            "params":  json.dumps(params),
+            "cmd":     confirm_cmd,
+        })
+        return
+
+    yield f"\x00think\x00⚙️ Exécution de `{func_name}`…"
+
+    # ── Dispatch : plugin → n8n → function_executor ───────────────────────────
+    plugin_result = _pr.dispatch_action(func_name, params)
+    if plugin_result is not None:
+        result = plugin_result
+    else:
+        action = func_name.replace("_", "-")
+        result = n8n_executor.call(action, params)
+
+    success    = result.get("success", False)
     result_msg = result.get("message", "")
 
+    if success and result_msg:
+        # Bypass total du LLM de followup pour éviter toute hallucination :
+        # le résultat est déjà formaté en markdown par handle_action.
+        yield "\x00think\x00✅ Données reçues"
+        yield result_msg
+        return
+
+    # Échec ou résultat vide : LLM formule un message d'erreur naturel (pas de données à inventer)
+    yield "\x00think\x00⚠️ Erreur lors de l'exécution"
     followup = list(conversation_messages)
-    hint = f"[Résultat: {'succès' if success else 'échec'}. {result_msg}]"
+    error_hint = (
+        f"[Résultat de l'action `{func_name}` : échec]\n"
+        f"{result_msg}\n\n"
+        "Explique cette erreur à l'utilisateur en français, de façon claire et concise. "
+        "Ne propose PAS de solution inventée, indique juste ce qui s'est passé."
+    )
     followup[-1] = {
-        "role": "user",
-        "content": f"{text}\n{hint}\nRéponds en français de façon naturelle et concise.",
+        "role":    "user",
+        "content": f"{text}\n\n{error_hint}",
     }
-    return await _call_llm(followup, thinking=False)
+    async for chunk in _stream_ollama(followup, thinking=False):
+        yield chunk
 
 
 # ---------------------------------------------------------------------------
@@ -605,7 +898,9 @@ async def _call_with_tools(text: str, conversation_messages: list[dict]) -> str:
 async def process_message(
     message: str,
     history: list[dict],
-    company_context: str | None = None,
+    company_context: str | None = None,   # compat existant — filtre infra
+    plugin_context:  str | None = None,   # NOUVEAU : univers actif ("home", "opent"…)
+    context_id:      str | None = None,   # NOUVEAU : sous-contexte (company_id, etc.)
 ) -> AsyncGenerator[str, None]:
     """
     Route et traite un message, yield les chunks de réponse au fil de l'eau.
@@ -615,6 +910,24 @@ async def process_message(
     user_text = (message or "").strip()
     if not user_text:
         return
+
+    _effective_ctx = context_id or company_context or None
+
+    # ── Radar : génération du request_id et événement d'entrée ──────────────
+    _req_id    = f"req_{_uuid.uuid4().hex[:16]}"
+    _req_start = _time.perf_counter()
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _emit_ev(
+            type="rag.query.received",
+            level="info",
+            module="web.pipeline",
+            request_id=_req_id,
+            session_id=session_id,
+            metadata={"query_preview": user_text[:300]},
+        )
+    except Exception:
+        pass
 
     text_lower = user_text.lower()
 
@@ -671,6 +984,70 @@ async def process_message(
         yield infra
         return
 
+    # Routing déterministe : liste VM/CT Proxmox — bypass LLM dispatcher (trop instable)
+    if _PROXMOX_VM_LIST_RE.search(user_text):
+        from core.plugin_registry import plugin_registry as _pr_vmlist
+        # Extraire instance_id depuis le texte ("de ot-mutu", "sur ot-mutu", etc.)
+        _m_inst = re.search(
+            r"\b(?:de|sur|pour|instance|proxmox)\s+([\w\-\.]+)",
+            user_text, re.IGNORECASE
+        )
+        _inst_hint = _m_inst.group(1) if _m_inst else None
+        _vmlist_result = _pr_vmlist.dispatch_action(
+            "vm_list",
+            {"instance_id": _inst_hint, "node": None}
+        )
+        if _vmlist_result and _vmlist_result.get("success") and _vmlist_result.get("message"):
+            _vmlist_msg = _vmlist_result["message"]
+            memory_store.save(session_id, "user", user_text)
+            memory_store.save(session_id, "assistant", _vmlist_msg)
+            yield _vmlist_msg
+            return
+
+    # Routing déterministe : backup Proxmox → carte de confirmation directe
+    _m_backup = _PROXMOX_BACKUP_RE.search(user_text)
+    if _m_backup:
+        _bk_vmid = int(_m_backup.group(2))
+        # Extraire storage depuis "sur <storage>" / "storage <storage>"
+        _m_storage = re.search(r"\b(?:sur|storage|stockage)\s+([\w\-]+)", user_text, re.IGNORECASE)
+        _bk_storage = _m_storage.group(1) if _m_storage else "local"
+        _bk_params  = {"vmid": _bk_vmid, "storage": _bk_storage, "compress": "zstd"}
+        _bk_card = json.dumps({
+            "__type":  "confirm_required",
+            "func":    "vm_backup",
+            "message": f"Lancer la sauvegarde de VM/CT **{_bk_vmid}** → storage `{_bk_storage}` (zstd) ?",
+            "params":  json.dumps(_bk_params),
+            "cmd":     f"vzdump {_bk_vmid} --compress zstd --storage {_bk_storage}",
+        })
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", f"[backup {_bk_vmid} en attente de confirmation]")
+        yield _bk_card
+        return
+
+    # Routing déterministe : power VM (stop/start/reboot) → carte de confirmation directe
+    _m_power = _PROXMOX_POWER_RE.search(user_text)
+    if _m_power:
+        _pw_verb  = _m_power.group(1).lower()
+        _pw_vmid  = int(_m_power.group(2))
+        _pw_action = (
+            "start"  if any(k in _pw_verb for k in ("start", "démarre", "demarre")) else
+            "stop"   if any(k in _pw_verb for k in ("stop", "arrête", "arrete", "étein", "etein")) else
+            "reboot"
+        )
+        _pw_label = {"start": "Démarrer", "stop": "Arrêter", "reboot": "Redémarrer"}[_pw_action]
+        _pw_params = {"vmid": _pw_vmid, "action": _pw_action}
+        _pw_card = json.dumps({
+            "__type":  "confirm_required",
+            "func":    "vm_power",
+            "message": f"{_pw_label} la VM/CT **{_pw_vmid}** ?",
+            "params":  json.dumps(_pw_params),
+            "cmd":     f"qm {_pw_action} {_pw_vmid}",
+        })
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", f"[power {_pw_action} {_pw_vmid} en attente de confirmation]")
+        yield _pw_card
+        return
+
     # Analyse caméra : "analyse dep-parking", "caméra parking combien de voitures ?"
     if any(t in text_lower for t in _CAMERA_TRIGGERS):
         # Chercher directement le nom de la caméra dans le texte (match le plus long gagne)
@@ -700,6 +1077,14 @@ async def process_message(
             memory_store.save(session_id, "user", user_text)
             memory_store.save(session_id, "assistant", full_answer)
             return
+
+    # Routing déterministe : état des entités domotiques (liste on/off sans LLM)
+    state_answer = _format_entity_state_answer(user_text)
+    if state_answer is not None:
+        memory_store.save(session_id, "user", user_text)
+        memory_store.save(session_id, "assistant", state_answer)
+        yield state_answer
+        return
 
     # Commandes de contrôle domotique : "allume X", "éteins X", "ouvre X"…
     m_ctrl = _CONTROL_RE.match(user_text.strip())
@@ -762,7 +1147,7 @@ async def process_message(
         return
 
     # Contexte conversationnel de base
-    messages: list[dict] = [{"role": "system", "content": _system_prompt()}]
+    messages: list[dict] = [{"role": "system", "content": _system_prompt(_effective_ctx)}]
     messages.extend(history[-20:])
 
     # Injection du contexte domotique si la question concerne les entités
@@ -776,6 +1161,43 @@ async def process_message(
 
     # Injection des skills + mémoire long terme, comme l'app
     messages = skill_manager.inject(messages, user_text)
+
+    # AutoSkills SQLite : injection des apprentissages adaptatifs
+    _autoskill_meta: dict = {"skills_injected": [], "skills_count": 0}
+    try:
+        from core.skills.autoskills_runtime import inject_autoskills
+        messages, _autoskill_meta = inject_autoskills(
+            messages,
+            query=user_text,
+            domain=_effective_ctx or plugin_context or "auto",
+            request_id=_req_id,
+            session_id=session_id,
+        )
+    except Exception:
+        pass
+
+    # MODULE_DOCUMENTS: injection RAG documentaire (entre skills et mémoire)
+    _doc_meta = None
+    _rag_start = _time.perf_counter()
+    try:
+        from core.documents.documents_injector import inject_documentation
+        messages, _doc_meta = inject_documentation(messages, user_text, context_id=_effective_ctx)
+    except Exception:
+        pass
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _chunks_found = len(_doc_meta) if _doc_meta else 0
+        _emit_ev(
+            type="rag.search.completed" if _chunks_found > 0 else "rag.context.empty",
+            level="info",
+            module="web.pipeline",
+            request_id=_req_id,
+            duration_ms=int((_time.perf_counter() - _rag_start) * 1000),
+            metadata={"chunks_found": _chunks_found},
+        )
+    except Exception:
+        pass
+
     mem = memory_store.build_context(user_text, current_session_id=session_id)
     if mem:
         # Injecter la mémoire comme échange user/assistant fictif en début d'historique.
@@ -798,22 +1220,76 @@ async def process_message(
     except Exception:
         route = "function_gemma"
 
-    # function_gemma: tool-calling complet puis réponse naturelle
+    # function_gemma: tool-calling complet puis réponse naturelle (streaming)
     if route == "function_gemma":
-        response = await _call_with_tools(user_text, messages)
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="llm.call.started", level="info", module="web.pipeline",
+                     request_id=_req_id, metadata={"route": "function_gemma"})
+        except Exception:
+            pass
+        _llm_start = _time.perf_counter()
+        full_response = ""
+        async for chunk in _stream_with_tools(user_text, messages, plugin_context_id=_effective_ctx):
+            # Les tokens de réflexion et les cartes de confirmation passent tels quels
+            if chunk.startswith("\x00think\x00") or chunk.startswith('{"__type"'):
+                yield chunk
+            else:
+                full_response += chunk
+                yield chunk
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="llm.call.completed", level="info", module="web.pipeline",
+                     request_id=_req_id,
+                     duration_ms=int((_time.perf_counter() - _llm_start) * 1000))
+        except Exception:
+            pass
         memory_store.save(session_id, "user", user_text)
-        memory_store.save(session_id, "assistant", response)
-        if response:
-            yield response
+        memory_store.save(session_id, "assistant", full_response)
+        try:
+            import asyncio as _asyncio
+            from core.skills.autoskills_runtime import maybe_update_autoskill
+            _asyncio.create_task(maybe_update_autoskill(
+                history=history, user_text=user_text, assistant_text=full_response,
+                domain=_effective_ctx or plugin_context or "auto",
+                request_id=_req_id, session_id=session_id, call_llm=_call_llm,
+            ))
+        except Exception:
+            pass
         return
 
     # qwen_thinking ou chat standard (vision/youtube/cad/print inclus en fallback texte)
     thinking = route == "qwen_thinking"
     full_response = ""
+    try:
+        from web.radar.events import emit_event as _emit_ev
+        _emit_ev(type="llm.call.started", level="info", module="web.pipeline",
+                 request_id=_req_id, metadata={"route": route})
+    except Exception:
+        pass
+    _llm_start = _time.perf_counter()
     async for chunk in _stream_ollama(messages, thinking=thinking):
         full_response += chunk
         yield chunk
 
     if full_response:
+        try:
+            from web.radar.events import emit_event as _emit_ev
+            _emit_ev(type="rag.response.sent", level="info", module="web.pipeline",
+                     request_id=_req_id,
+                     duration_ms=int((_time.perf_counter() - _req_start) * 1000),
+                     metadata={"llm_ms": int((_time.perf_counter() - _llm_start) * 1000)})
+        except Exception:
+            pass
         memory_store.save(session_id, "user", user_text)
         memory_store.save(session_id, "assistant", full_response)
+        try:
+            import asyncio as _asyncio
+            from core.skills.autoskills_runtime import maybe_update_autoskill
+            _asyncio.create_task(maybe_update_autoskill(
+                history=history, user_text=user_text, assistant_text=full_response,
+                domain=_effective_ctx or plugin_context or "auto",
+                request_id=_req_id, session_id=session_id, call_llm=_call_llm,
+            ))
+        except Exception:
+            pass

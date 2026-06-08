@@ -158,18 +158,22 @@ function _sec(title, rows) {
 }
 
 // ── Module cards ──────────────────────────────────────────────
-function _mkModules() {
-  const mods = [
-    { key: 'modules.domotique',    icon: '🏠', label: 'Domotique',     sub: 'HA, Kasa, Domoticz' },
-    { key: 'modules.print3d',      icon: '🖨️', label: 'Impression 3D', sub: 'K1, OctoPrint…' },
-    { key: 'modules.music',        icon: '🎵', label: 'Musique',       sub: 'Navidrome' },
-    { key: 'modules.bibliotheque', icon: '📚', label: 'Bibliothèque',  sub: 'Calibre-Web' },
-    { key: 'modules.societe',      icon: '🏢', label: 'Sociétés CRM', sub: 'Tableau de bord' },
-  ];
+async function _mkModules() {
+  let mods = [];
+  try {
+    const _tok = localStorage.getItem('ada_token');
+    const h = _tok ? { 'Authorization': 'Bearer ' + _tok } : {};
+    mods = await fetch('/api/plugins/catalog', { headers: h }).then(r => r.json());
+  } catch {
+    mods = [];
+  }
+  if (!mods.length) {
+    return `<div class="s-section"><p style="color:var(--text-dim);font-size:12px">Impossible de charger le catalogue de plugins.</p></div>`;
+  }
   const cards = mods.map(m => {
-    const on = _get(m.key);
+    const on = m.enabled;
     return `
-    <div class="s-module-card ${on ? 'enabled' : ''}" data-mod="${m.key}">
+    <div class="s-module-card ${on ? 'enabled' : ''}" data-mod="modules.${m.key}">
       <div class="mod-icon">${m.icon}</div>
       <div class="mod-label">${m.label}</div>
       <div class="mod-sub">${m.sub}</div>
@@ -180,6 +184,11 @@ function _mkModules() {
     <h3 class="s-section-title">Modules optionnels — menu &amp; onglets</h3>
     <div class="s-modules">${cards}</div>
   </div>`;
+}
+
+// ── Panel Plugins ────────────────────────────────────────────
+async function _panelPlugins() {
+  return _mkModules();
 }
 
 // ── Panels ────────────────────────────────────────────────────
@@ -193,8 +202,6 @@ function _panelAccueil() {
       ]),
       _mkSelect('theme', 'Thème', 'Apparence de l\'application', ['Light','Dark','Auto']),
     ].join('')),
-
-    _mkModules(),
 
     _sec('Météo', [
       _mkText('weather.city', 'Ville', 'Nom affiché dans le briefing', 'Paris, FR'),
@@ -503,33 +510,119 @@ async function _panelAuth() {
   ${myDevices}`;
 }
 
+// ── MODULE_DOCUMENTS: panel RAG documentaire ─────────────────
+async function _panelDocuments() {
+  // Charger le statut en direct depuis l'API
+  let status = null;
+  try {
+    const r = await fetch('/api/documents/status');
+    if (r.ok) status = await r.json();
+  } catch {}
+
+  const st = status?.stats || {};
+  const mt = status?.mount || {};
+  const statsHtml = status ? `
+    <div class="doc-stat-grid">
+      <div class="doc-stat"><span class="doc-stat-n">${st.documents ?? '—'}</span><span class="doc-stat-l">Documents</span></div>
+      <div class="doc-stat"><span class="doc-stat-n">${st.chunks ?? '—'}</span><span class="doc-stat-l">Chunks FTS5</span></div>
+      <div class="doc-stat"><span class="doc-stat-n">${st.total_size_bytes ? Math.round(st.total_size_bytes/1024) + ' Ko' : '—'}</span><span class="doc-stat-l">Taille totale</span></div>
+      <div class="doc-stat"><span class="doc-stat-n">${st.last_update ? st.last_update.slice(0,16).replace('T',' ') : '—'}</span><span class="doc-stat-l">Dernière MAJ</span></div>
+    </div>` : '<div style="color:#64748b;font-size:.85rem">Statistiques indisponibles</div>';
+
+  const mountBadge = mt.ok === true
+    ? `<span style="color:#4caf50">✓ Monté (${mt.device || 'OK'})</span>`
+    : mt.ok === false
+    ? `<span style="color:#ef5350">✗ ${mt.reason || 'Non monté'}</span>`
+    : '<span style="color:#64748b">—</span>';
+
+  return `
+  ${_sec('Activation', [
+    _mkToggle('documents.enabled', 'Activer la base documentaire RAG',
+      'Indexe les fichiers Markdown et les injecte dans le contexte du chat (SQLite FTS5)'),
+  ].join(''))}
+
+  ${_sec('Chemin source', [
+    _mkText('documents.root_path', 'Dossier racine', 'Chemin absolu vers le dossier de documentation Markdown', '/mnt/nvme/docs'),
+    _mkText('documents.index_path', 'Chemin de la base SQLite', 'Laisser vide pour utiliser data/documents.db', ''),
+  ].join(''))}
+
+  ${_sec('Vérification de montage', [
+    _mkToggle('documents.require_mount', 'Exiger un point de montage valide',
+      'Interdit l\'indexation si le disque n\'est pas monté correctement'),
+    _mkText('documents.expected_mount_path', 'Point de montage attendu', 'Ex: /mnt/nvme', '/mnt/nvme'),
+    _mkText('documents.expected_device_hint', 'Indice device (optionnel)', 'Ex: nvme0n1, sdb, D:', ''),
+    `<div class="s-row">
+      <div class="s-row-info">
+        <div class="s-row-label">État du montage</div>
+        <div class="s-row-desc" id="doc-mount-status">${mountBadge}</div>
+      </div>
+      <button class="s-btn" id="doc-check-mount-btn">Vérifier</button>
+    </div>`,
+  ].join(''))}
+
+  ${_sec('Indexation', [
+    _mkToggle('documents.auto_index_on_startup', 'Indexation automatique au démarrage',
+      'Réindexe les fichiers nouveaux ou modifiés à chaque lancement du serveur'),
+    _mkNumber('documents.chunk_size', 'Taille des chunks (caractères)', 'Taille maximale d\'un chunk Markdown', 400, 4000, 100),
+    _mkNumber('documents.chunk_overlap', 'Overlap (caractères)', 'Chevauchement entre chunks consécutifs', 0, 800, 50),
+    `<div class="s-row">
+      <div class="s-row-info">
+        <div class="s-row-label">Actions</div>
+        <div class="s-row-desc" id="doc-reindex-status"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="s-btn primary" id="doc-reindex-btn">⟳ Réindexer</button>
+        <button class="s-btn" id="doc-reindex-force-btn">⟳ Forcer tout</button>
+        <button class="s-btn danger" id="doc-delete-index-btn">✕ Vider l'index</button>
+      </div>
+    </div>`,
+  ].join(''))}
+
+  ${_sec('Contexte RAG (injection LLM)', [
+    _mkNumber('documents.max_context_chunks', 'Chunks max injectés', 'Nombre de chunks documentaires injectés dans le prompt', 1, 20, 1),
+    _mkNumber('documents.max_context_chars', 'Caractères max injectés', 'Limite de taille du contexte documentaire', 1000, 20000, 500),
+    _mkNumber('documents.min_query_length', 'Longueur minimale de requête', 'Requêtes plus courtes ignorent le RAG', 1, 20, 1),
+    _mkToggle('documents.include_sources_in_answer', 'Inclure les sources', 'Ajoute les chemins de fichiers dans le contexte'),
+  ].join(''))}
+
+  ${_sec('Statistiques', statsHtml)}`;
+}
+
 // ── Build HTML ────────────────────────────────────────────────
 async function _buildHTML() {
-  const [authHtml, societeHtml] = await Promise.all([
+  const [authHtml, societeHtml, pluginsHtml, documentsHtml] = await Promise.all([
     _panelAuth(),
     _panelSociete(),
+    _panelPlugins(),
+    _panelDocuments(),
   ]);
+  // Visibilité initiale des onglets selon les modules actifs
+  const _tabVis = (mod) => _get(`modules.${mod}`) ? '' : 'display:none';
   return `
 <div class="settings-wrap">
   <div class="s-tabbar">
     <button class="s-tab active" data-panel="general">🏠 Accueil</button>
+    <button class="s-tab" data-panel="plugins">🧩 Plugins</button>
     <button class="s-tab" data-panel="llm">🤖 LLM</button>
-    <button class="s-tab" data-panel="domotique">💡 Domotique</button>
-    <button class="s-tab" data-panel="print3d">🖨 Impression 3D</button>
-    <button class="s-tab" data-panel="music">🎵 Musique</button>
-    <button class="s-tab" data-panel="bibliotheque">📚 Bibliothèque</button>
-    <button class="s-tab" data-panel="societe">🏢 Sociétés</button>
+    <button class="s-tab" data-mod-tab="domotique" data-panel="domotique" style="${_tabVis('domotique')}">💡 Domotique</button>
+    <button class="s-tab" data-mod-tab="print3d" data-panel="print3d" style="${_tabVis('print3d')}">🖨 Impression 3D</button>
+    <button class="s-tab" data-mod-tab="music" data-panel="music" style="${_tabVis('music')}">🎵 Musique</button>
+    <button class="s-tab" data-mod-tab="bibliotheque" data-panel="bibliotheque" style="${_tabVis('bibliotheque')}">📚 Bibliothèque</button>
+    <button class="s-tab" data-mod-tab="societe" data-panel="societe" style="${_tabVis('societe')}">🏢 Sociétés</button>
+    <button class="s-tab" data-panel="documents">📂 Documents</button>
     <button class="s-tab" data-panel="auth">🔐 Auth</button>
     <span class="s-save-dot" id="s-savedot"></span>
   </div>
   <div class="s-panels">
     <div class="s-panel active" id="panel-general">${_panelAccueil()}</div>
+    <div class="s-panel" id="panel-plugins">${pluginsHtml}</div>
     <div class="s-panel" id="panel-llm">${_panelLLM()}</div>
     <div class="s-panel" id="panel-domotique">${_panelDomotique()}</div>
     <div class="s-panel" id="panel-print3d">${_panelPrint3D()}</div>
     <div class="s-panel" id="panel-music">${_panelMusique()}</div>
     <div class="s-panel" id="panel-bibliotheque">${_panelBibliotheque()}</div>
     <div class="s-panel" id="panel-societe">${societeHtml}</div>
+    <div class="s-panel" id="panel-documents">${documentsHtml}</div>
     <div class="s-panel" id="panel-auth">${authHtml}</div>
   </div>
 </div>`;
@@ -684,7 +777,7 @@ async function _testConnection(btn, root) {
       const r = await fetch('/api/status');
       ok = (await r.json()).ollama === 'online';
     } else if (testId === 'ha') {
-      url = (_cfg.home_assistant?.url || '').rstrip('/') + '/api/';
+      url = (_cfg.home_assistant?.url || '').replace(/\/$/, '') + '/api/';
       const r = await fetch(url, { headers: { Authorization: `Bearer ${_cfg.home_assistant?.token || ''}` }, signal: AbortSignal.timeout(5000) });
       ok = r.ok;
     } else if (testId === 'domoticz') {
@@ -766,6 +859,7 @@ async function _loadModels(root) {
 
 // ── Nav module visibility ─────────────────────────────────────
 export function applyModuleVisibility() {
+  // Visibilité des éléments de navigation principaux
   const map = {
     domotique:    ['[data-page="home"]', '[data-view="cameras"]'],
     print3d:      ['[data-page="printers"]', '[data-page="cad"]'],
@@ -780,6 +874,116 @@ export function applyModuleVisibility() {
       });
     });
   });
+
+  // Visibilité des onglets de configuration dans les Paramètres
+  if (!_root) return;
+  const modTabMap = ['domotique', 'print3d', 'music', 'bibliotheque', 'societe'];
+  modTabMap.forEach(mod => {
+    const on  = _get(`modules.${mod}`);
+    const tab = _root.querySelector(`[data-mod-tab="${mod}"]`);
+    if (!tab) return;
+    tab.style.display = on ? '' : 'none';
+    // Si cet onglet était actif et qu'on le masque → revenir sur Accueil
+    if (!on && tab.classList.contains('active')) {
+      _root.querySelectorAll('.s-tab').forEach(t => t.classList.remove('active'));
+      _root.querySelectorAll('.s-panel').forEach(p => p.classList.remove('active'));
+      _root.querySelector('[data-panel="general"]')?.classList.add('active');
+      _root.querySelector('#panel-general')?.classList.add('active');
+    }
+  });
+}
+
+// ── MODULE_DOCUMENTS: event bindings ────────────────────────
+function _bindDocumentsEvents(root) {
+  const panel = root.querySelector('#panel-documents');
+  if (!panel) return;
+
+  // Vérifier le montage
+  panel.querySelector('#doc-check-mount-btn')?.addEventListener('click', async () => {
+    const btn = panel.querySelector('#doc-check-mount-btn');
+    const statusEl = panel.querySelector('#doc-mount-status');
+    if (btn) btn.disabled = true;
+    try {
+      const r = await fetch('/api/documents/status');
+      const data = await r.json();
+      const mt = data.mount || {};
+      if (statusEl) {
+        statusEl.innerHTML = mt.ok
+          ? `<span style="color:#4caf50">✓ Monté (${mt.device || 'OK'}) — ${mt.filesystem || ''} sur ${mt.root_path}</span>`
+          : `<span style="color:#ef5350">✗ ${mt.reason || 'Non monté'}</span>`;
+      }
+    } catch (e) {
+      if (statusEl) statusEl.innerHTML = `<span style="color:#ef5350">Erreur : ${e.message}</span>`;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
+
+  // Réindexer (incrémental)
+  panel.querySelector('#doc-reindex-btn')?.addEventListener('click', () => _doReindex(panel, false));
+  // Réindexer (forcer tout)
+  panel.querySelector('#doc-reindex-force-btn')?.addEventListener('click', () => _doReindex(panel, true));
+
+  // Vider l'index
+  panel.querySelector('#doc-delete-index-btn')?.addEventListener('click', async () => {
+    if (!confirm('Vider entièrement l\'index documentaire ? Les fichiers sources ne sont pas touchés.')) return;
+    const statusEl = panel.querySelector('#doc-reindex-status');
+    try {
+      const r = await fetch('/api/documents/index', { method: 'DELETE' });
+      const data = await r.json();
+      if (statusEl) statusEl.innerHTML = '<span style="color:#4caf50">Index vidé ✓</span>';
+      setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+      // Rafraîchir les stats
+      await _refreshDocStats(panel);
+    } catch (e) {
+      if (statusEl) statusEl.innerHTML = `<span style="color:#ef5350">Erreur : ${e.message}</span>`;
+    }
+  });
+}
+
+async function _doReindex(panel, force) {
+  const statusEl = panel.querySelector('#doc-reindex-status');
+  const btn = panel.querySelector(force ? '#doc-reindex-force-btn' : '#doc-reindex-btn');
+  if (btn) btn.disabled = true;
+  if (statusEl) statusEl.innerHTML = '<span style="color:#94a3b8">Indexation en cours…</span>';
+  try {
+    const r = await fetch('/api/documents/reindex', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    const res = data.result || {};
+    const total = (res.indexed || 0) + (res.updated || 0);
+    if (statusEl) statusEl.innerHTML =
+      `<span style="color:#4caf50">✓ ${total} traités, ${res.skipped || 0} ignorés, ${res.deleted || 0} supprimés${res.errors ? ', ' + res.errors + ' erreurs' : ''}</span>`;
+    setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
+    await _refreshDocStats(panel);
+  } catch (e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ef5350">Erreur : ${e.message}</span>`;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function _refreshDocStats(panel) {
+  try {
+    const r = await fetch('/api/documents/status');
+    const data = await r.json();
+    const st = data.stats || {};
+    const grid = panel.querySelector('.doc-stat-grid');
+    if (!grid) return;
+    const vals = [
+      st.documents ?? '—',
+      st.chunks ?? '—',
+      st.total_size_bytes ? Math.round(st.total_size_bytes / 1024) + ' Ko' : '—',
+      st.last_update ? st.last_update.slice(0, 16).replace('T', ' ') : '—',
+    ];
+    grid.querySelectorAll('.doc-stat-n').forEach((el, i) => {
+      if (vals[i] !== undefined) el.textContent = vals[i];
+    });
+  } catch {}
 }
 
 // ── Auth event bindings ───────────────────────────────────────
@@ -1143,6 +1347,9 @@ export async function mount(container) {
   _bindEvents(container);
   _bindAuthEvents(container);
   _bindSocieteEvents(container);
+  _bindDocumentsEvents(container);
+  // Appliquer la visibilité des onglets config selon modules actifs
+  applyModuleVisibility();
 
   // Show models count
   const countEl = container.querySelector('#models-count');

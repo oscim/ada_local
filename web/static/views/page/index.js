@@ -297,55 +297,155 @@ function _renderHome(data, el) {
   const entities  = data.entities  || [];
   const providers = data.providers || [];
 
-  if (!entities.length) {
-    el.innerHTML = '<section class="page-panel"><p class="page-muted">Aucune entité domotique trouvée. Vérifiez la configuration des providers (HA, Kasa, Domoticz).</p></section>';
-    return;
-  }
+  // ── Icônes et labels ─────────────────────────────────────────────────────
+  const _SC  = { connected:'var(--green)', online:'var(--green)', disconnected:'#ff3b5c', offline:'#ff3b5c', error:'#ff3b5c', unknown:'#ffa500' };
+  const _PI  = { kasa:'🔌', home_assistant:'🏠', domoticz:'🏗' };
+  const _TI  = { light:'💡', switch:'🔌', media_player:'🎵', sensor:'🌡', binary_sensor:'📡', camera:'📷' };
+  const _TL  = { sensor:'Capteurs', binary_sensor:'Capteurs binaires', media_player:'Lecteurs', camera:'Caméras', unknown:'Autres' };
 
-  // Statut providers
-  const provHtml = providers.map((p) => {
-    const dot = p.status === 'connected' ? 'online' : p.status === 'disconnected' ? 'offline' : 'unknown';
-    return `<div class="page-status-row"><span><i class="page-dot ${dot}"></i>${escapeHtml(p.name)}</span><b>${escapeHtml(p.status || '?')}</b></div>`;
+  // ── 1. Barre providers ───────────────────────────────────────────────────
+  const provBadges = providers.map(p => {
+    const c = _SC[p.status] || '#888';
+    return `<span class="domo-prov-badge">
+      <i style="width:7px;height:7px;border-radius:50%;background:${c};display:inline-block;flex-shrink:0;vertical-align:middle"></i>
+      ${_PI[p.id] || '📡'} ${escapeHtml(p.name)}
+      <span style="color:${c};font-size:9px;margin-left:3px">${escapeHtml(p.status || '?')}</span>
+    </span>`;
   }).join('');
 
-  // Grouper par type
-  const TYPE_LABELS = { light: 'Lumières', switch: 'Switches', media_player: 'Lecteurs', sensor: 'Capteurs', binary_sensor: 'Capteurs binaires', camera: 'Caméras', unknown: 'Autres' };
-  const STATE_ICON  = { on: '🟢', off: '⚫', playing: '▶️', unavailable: '🔴' };
+  // ── 2. Entités par catégorie ──────────────────────────────────────────────
+  const domo_scenes    = entities.filter(e => e.type === 'scene');
+  const controllable   = entities.filter(e => ['light','switch'].includes(e.type));
+  const informational  = entities.filter(e => !['light','switch','scene'].includes(e.type));
 
+  // Scènes Domoticz → boutons d'activation (1 clic, pas de toggle)
+  const domoSceneItems = domo_scenes.map(e => {
+    const isOn = e.state === 'on';
+    return `<button class="scene-btn${isOn ? ' on' : ''}" data-entity-id="${escapeHtml(e.id)}">${escapeHtml(e.name)}</button>`;
+  }).join('');
+
+  const _onCount = controllable.filter(e => e.state === 'on').length;
+  const toggleItems = controllable.map(e => {
+    const isOn = e.state === 'on';
+    let sub = (e.zone && e.zone !== 'Other') ? e.zone : '';
+    if (e.attributes?.brightness  != null) sub += (sub ? ' · ' : '') + `${Math.round(e.attributes.brightness / 2.55)}%`;
+    else if (e.attributes?.temperature != null) sub += (sub ? ' · ' : '') + `${e.attributes.temperature}°`;
+    const icon = _TI[e.type] || '⚡';
+    return `<div class="dev-card" data-id="${escapeHtml(e.id)}" data-provider="${escapeHtml(e.provider)}" data-name="${escapeHtml(e.name.toLowerCase())}" data-active="${isOn ? '1' : '0'}"${!isOn ? ' hidden' : ''}>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start"><span>${icon}</span><div class="sw${isOn ? ' on' : ''}"></div></div>
+      <div class="dev-n">${escapeHtml(e.name)}</div>
+      ${sub ? `<div class="dev-s">${escapeHtml(sub)}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  // ── 4. Capteurs et autres → panneaux info ────────────────────────────────
   const byType = {};
-  for (const e of entities) {
-    const t = e.type || 'unknown';
-    if (!byType[t]) byType[t] = [];
-    byType[t].push(e);
-  }
+  for (const e of informational) (byType[e.type || 'unknown'] ||= []).push(e);
 
-  // Priorité d'affichage
-  const TYPE_ORDER = ['light', 'switch', 'media_player', 'sensor', 'binary_sensor', 'camera', 'unknown'];
-  const sortedTypes = [
-    ...TYPE_ORDER.filter((t) => byType[t]),
-    ...Object.keys(byType).filter((t) => !TYPE_ORDER.includes(t)),
-  ];
-
-  const panelsHtml = sortedTypes.map((type) => {
-    const group = byType[type];
-    const rows = group.map((e) => {
-      const icon  = STATE_ICON[e.state] || '🟡';
-      let extra = '';
-      if (e.attributes?.brightness != null) extra = ` · ${Math.round(e.attributes.brightness / 2.55)}%`;
-      else if (e.attributes?.temperature != null) extra = ` · ${e.attributes.temperature}°`;
-      else if (e.attributes?.humidity != null) extra = ` · ${e.attributes.humidity}%`;
-      const zone = e.zone && e.zone !== 'Other' ? `<span class="page-muted"> [${escapeHtml(e.zone)}]</span>` : '';
-      return `<div class="page-status-row"><span>${icon} ${escapeHtml(e.name)}${zone}</span><b>${escapeHtml(e.state || '?')}${escapeHtml(extra)}</b></div>`;
+  const infoPanels = Object.keys(byType).map(type => {
+    const icon = _TI[type] || '📡';
+    const cards = byType[type].map(e => {
+      const stRaw  = e.state || '?';
+      const unit   = e.attributes?.unit_of_measurement || '';
+      return `<div class="sensor-card">
+        <div class="sensor-icon">${icon}</div>
+        <div class="sensor-val">${escapeHtml(stRaw)}<span style="font-size:9px;font-weight:400">${escapeHtml(unit)}</span></div>
+        <div class="sensor-lbl">${escapeHtml(e.name)}</div>
+      </div>`;
     }).join('');
-    return `<section class="page-panel"><h3>${escapeHtml(TYPE_LABELS[type] || type)} (${group.length})</h3><div class="page-status-list">${rows}</div></section>`;
+    return `<div style="margin-top:6px"><div class="sec">${escapeHtml(_TL[type] || type)}</div><div class="toggle-grid-4">${cards}</div></div>`;
   }).join('');
 
   el.innerHTML = `
-    <section class="page-panel"><h3>Providers</h3>
-      ${provHtml || '<p class="page-muted">Aucun provider configuré.</p>'}
-      <div class="page-status-row" style="margin-top:6px"><span>Total entités</span><b>${data.count || 0}</b></div>
-    </section>
-    ${panelsHtml}`;
+    <div class="domo-wrap">
+      ${providers.length ? `<div class="domo-prov-bar">${provBadges}</div>` : ''}
+      <div class="sec">Scènes</div>
+      <div class="scene-row" id="domo-entity-scenes">
+        ${domoSceneItems || '<span style="color:var(--text-dim);font-size:11px">Aucune scène disponible</span>'}
+      </div>
+      ${controllable.length ? `
+        <div class="sec" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Groupes &amp; Appareils <span id="domo-dev-count" style="font-size:10px;font-weight:400;color:var(--text-dim)">${_onCount} actif${_onCount > 1 ? 's' : ''} · ${controllable.length} total</span></span>
+          <button id="domo-show-all" class="scene-btn" style="padding:2px 8px;font-size:10px;margin:0">Tout afficher</button>
+        </div>
+        <input id="domo-search" class="domo-search" placeholder="🔍 Rechercher un appareil…">
+        <div class="toggle-grid-4" id="domo-toggles">${toggleItems}</div>
+      ` : `<p class="page-muted" style="margin-top:12px">Aucune entité contrôlable. Vérifiez la configuration des providers.</p>`}
+      ${infoPanels}
+    </div>
+    <style>
+      .domo-wrap{display:flex;flex-direction:column;padding:2px 0;grid-column:1/-1}
+      .domo-prov-bar{display:flex;gap:8px;flex-wrap:wrap;padding:6px 0 10px;border-bottom:1px solid var(--border);margin-bottom:2px}
+      .domo-prov-badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;padding:4px 10px;border-radius:20px;background:var(--surface);border:1px solid var(--border);color:var(--text)}
+    </style>`;
+
+  // Scènes Domoticz : click → POST /api/entity/<id>/toggle (on=true = activate)
+  const domoSceneBar = el.querySelector('#domo-entity-scenes');
+  if (domoSceneBar) {
+    domoSceneBar.addEventListener('click', e => {
+      const btn = e.target.closest('.scene-btn');
+      if (!btn) return;
+      const id = btn.dataset.entityId;
+      if (!id) return;
+      btn.classList.add('on');
+      fetch(`/api/entity/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ on: true }),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) btn.classList.remove('on');
+        // Retire le highlight après 2s (scène = action ponctuelle)
+        setTimeout(() => btn.classList.remove('on'), 2000);
+      }).catch(() => btn.classList.remove('on'));
+    });
+  }
+
+  // Toggles groupes/appareils : click → POST /api/entity/<id>/toggle
+  const grid = el.querySelector('#domo-toggles');
+  if (grid) {
+    // ── Filtre recherche / actifs ──────────────────────────────────────────
+    let _showAll = false;
+    function _domoFilter(q) {
+      const q2 = (q || '').toLowerCase().trim();
+      let active = 0, total = 0;
+      grid.querySelectorAll('.dev-card').forEach(c => {
+        total++;
+        const match = !q2 || (c.dataset.name || '').includes(q2);
+        const on = c.dataset.active === '1';
+        if (on) active++;
+        c.hidden = !(match && (_showAll || on));
+      });
+      const cnt = el.querySelector('#domo-dev-count');
+      if (cnt) cnt.textContent = active + ' actif' + (active > 1 ? 's' : '') + ' · ' + total + ' total';
+    }
+    const searchInput = el.querySelector('#domo-search');
+    const showAllBtn  = el.querySelector('#domo-show-all');
+    if (searchInput) searchInput.addEventListener('input', e => _domoFilter(e.target.value));
+    if (showAllBtn)  showAllBtn.addEventListener('click', () => {
+      _showAll = !_showAll;
+      showAllBtn.textContent = _showAll ? 'Actifs seuls' : 'Tout afficher';
+      _domoFilter(searchInput?.value || '');
+    });
+
+    // ── Toggle switch ──────────────────────────────────────────────────────
+    grid.addEventListener('click', e => {
+      const sw = e.target.closest('.sw');
+      if (!sw) return;
+      const card = sw.closest('.dev-card');
+      const id   = card?.dataset.id;
+      if (!id) return;
+      const isOn = sw.classList.toggle('on');
+      card.dataset.active = isOn ? '1' : '0';
+      _domoFilter(searchInput?.value || '');
+      fetch(`/api/entity/${encodeURIComponent(id)}/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('ada_token') || ''}` },
+        body: JSON.stringify({ on: isOn }),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) { sw.classList.toggle('on'); card.dataset.active = isOn ? '0' : '1'; _domoFilter(searchInput?.value || ''); }
+      }).catch(() => { sw.classList.toggle('on'); card.dataset.active = isOn ? '0' : '1'; _domoFilter(searchInput?.value || ''); });
+    });
+  }
 }
 
 function _renderSkills(data, el) {
@@ -521,12 +621,12 @@ export async function mount(vp, opts = {}) {
 
   _root.innerHTML = `
     <div class="page-shell">
-      <div class="page-top">
+      ${pageKey === 'home' ? '' : `<div class="page-top">
         <h2 class="page-title">${escapeHtml(label || pageKey)}</h2>
         <p class="page-desc">${escapeHtml(cfg.description)}</p>
-      </div>
+      </div>`}
       <div class="page-data-wrap" id="page-data-wrap"></div>
-      <div class="page-actions">${actionsHtml}</div>
+      ${pageKey === 'home' ? '' : `<div class="page-actions">${actionsHtml}</div>`}
     </div>`;
 
   vp.appendChild(_root);

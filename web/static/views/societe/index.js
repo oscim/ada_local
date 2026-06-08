@@ -951,22 +951,25 @@ export async function mount(container) {
     document.head.appendChild(s);
   }
 
-  // Layout deux colonnes : contenu | chat
+  // Layout pleine largeur — le chat est géré par le shell principal
   container.innerHTML = `
     <div class="soc-page-layout">
       <div class="soc-content" id="soc-content"></div>
-      <div class="soc-chat-panel" id="soc-chat-panel"></div>
     </div>`;
 
   _contentEl = container.querySelector('#soc-content');
-  const chatPane = container.querySelector('#soc-chat-panel');
 
-  // Charger d'abord les sociétés, puis monter le chat panel
+  // Charger les sociétés puis notifier le shell
   await _renderDashboard(_contentEl);
-  _renderChatPanel(chatPane);
+  window.adaSocSetCompanies?.(_companies);
 }
 
-export function unmount() { _activeId = null; }
+export function unmount() {
+  _activeId = null;
+  _chatCtxId = null;
+  _chatCtxText = '';
+  window.adaSocSetCompanies?.([]);
+}
 
 // ── API publique chat context (MODULE_SOCIETE) ────────────────────
 export async function getSocieteContext(companyId) {

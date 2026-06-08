@@ -14,7 +14,7 @@ from pathlib import Path
 # Assurer que la racine du projet est dans sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
@@ -33,12 +33,28 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import JSONResponse as _JSONResponse
 from starlette.types import ASGIApp as _ASGIApp
 
+from core.ha_control import ha_manager
 from core.memory_store import memory_store
 from core.runtime_state import runtime_state
 from core.skill_manager import skill_manager
 from core.settings_store import settings
 from web.pipeline import process_message
+# MODULE_SKILLS: module de mémoire procédurale SQLite FTS5
+from core.skills import (
+    init_db as _skills_init_db,
+    seed_from_files as _skills_seed,
+    run_maintenance as _skills_maintenance,
+    list_skills as _skills_list,
+    get_skill as _skills_get,
+    save_skill as _skills_save,
+    delete_skill as _skills_delete,
+    archive_skill as _skills_archive,
+    restore_skill as _skills_restore,
+    promote_skill as _skills_promote,
+)
 from web.router_auth import router as _auth_router
+from web.router_profiles import router as _profiles_router
+from core.routes.profiles import initialize as _profiles_init
 
 # ---------------------------------------------------------------------------
 # Routes toujours publiques (même quand l'auth est activée)
@@ -46,6 +62,7 @@ from web.router_auth import router as _auth_router
 _PUBLIC_PREFIXES = (
     "/api/auth/",
     "/static/",
+    "/api/webhook/",   # webhooks entrants — auth propre par token secret
 )
 _PUBLIC_EXACT = {
     "/",
@@ -85,12 +102,29 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 app = FastAPI(title="ADA Mobile", docs_url=None, redoc_url=None)
 app.add_middleware(_AuthMiddleware)
 app.include_router(_auth_router)
+app.include_router(_profiles_router)
 
 # MODULE_SOCIETE: guard — router branché uniquement si module actif
 from config import MODULES_ENABLED as _MODULES_ENABLED
 if _MODULES_ENABLED.get("societe", False):
     from web.router_societe import router as _societe_router
     app.include_router(_societe_router)
+
+# router_plugins : toujours actif — retourne liste vide si aucun plugin enregistré
+from web.router_plugins import router as _plugins_router
+app.include_router(_plugins_router)
+
+# Webhooks entrants — Domoticz, n8n, Home Assistant, etc.
+from web.router_webhook import router as _webhook_router
+app.include_router(_webhook_router)
+
+# routes_infra : Proxmox/PBS multi-instance — toujours monté, guard interne
+from web.routes_infra import router as _infra_router
+app.include_router(_infra_router)
+
+# MODULE_DOCUMENTS: base documentaire RAG locale — toujours monté, guard interne
+from web.router_documents import router as _documents_router
+app.include_router(_documents_router)
 
 _STATIC = Path(__file__).parent / "static"
 
@@ -107,6 +141,9 @@ class _NoCacheStaticFiles(StaticFiles):
 
 app.mount("/static", _NoCacheStaticFiles(directory=str(_STATIC)), name="static")
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 @app.on_event("startup")
 async def _startup() -> None:
@@ -116,10 +153,44 @@ async def _startup() -> None:
     if settings.get("auth.enabled", False):
         from web.auth_db import initialize as _auth_db_init
         _auth_db_init()
-    # MODULE_SOCIETE: enregistrement des plugins au démarrage web
-    if _MODULES_ENABLED.get("societe", False):
-        from core.plugin_registry import register_enabled_plugins
-        register_enabled_plugins()
+    # Initialise les profils d'affichage (tables + seed)
+    _profiles_init()
+    # MODULE_SOCIETE: enregistrement des plugins au démarrage web (tous modules)
+    from core.plugin_registry import register_enabled_plugins, plugin_registry as _plugin_registry
+    register_enabled_plugins()
+    # Enrichir le semantic_router avec les utterances des plugins
+    try:
+        from core.semantic_router import inject_plugin_utterances as _inject_utt
+        _inject_utt(_plugin_registry.combined_semantic_utterances())
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Server] inject_plugin_utterances: %s", _e)
+    # Enregistrer les webhooks n8n des plugins
+    try:
+        from core.n8n_executor import n8n_executor as _n8n
+        _n8n.register_plugin_webhooks(_plugin_registry.combined_n8n_webhooks())
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Server] register_plugin_webhooks: %s", _e)
+    # MODULE_SKILLS: initialisation DB skills FTS5 + seed + maintenance
+    try:
+        _skills_init_db()
+        _skills_seed()
+        _skills_maintenance()
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Skills] Erreur init : %s", _e)
+    # MODULE_DOCUMENTS: initialisation DB documentaire + indexation si activé
+    try:
+        from core.documents.documents_db import init_db as _docs_init_db
+        _docs_init_db()
+        from core.settings_store import settings as _settings_ref
+        if _settings_ref.get("documents.enabled", False) and _settings_ref.get("documents.auto_index_on_startup", True):
+            from core.documents.documents_indexer import index_all as _docs_index
+            _docs_index(force=False)
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("[Documents] Erreur init : %s", _e)
     # Ping périodique des services infra (built-in + custom endpoints) toutes les 90s
     import asyncio as _aio
     async def _infra_poller():
@@ -164,9 +235,11 @@ async def index():
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
-    message: str
-    history: list[dict] = []
-    company_context: str | None = None
+    message:         str
+    history:         list[dict] = []
+    company_context: str | None = None   # compat existant
+    plugin_context:  str | None = None   # NOUVEAU : univers actif
+    context_id:      str | None = None   # NOUVEAU : sous-contexte
 
 
 @app.post("/api/chat")
@@ -178,10 +251,22 @@ async def chat(req: ChatRequest):
     """
     async def _sse():
         try:
-            async for chunk in process_message(req.message, req.history, company_context=req.company_context):
+            async for chunk in process_message(
+                req.message,
+                req.history,
+                company_context=req.company_context,
+                plugin_context=req.plugin_context,
+                context_id=req.context_id,
+            ):
                 if chunk.startswith('\x00img\x00'):
                     img_url = chunk[5:]  # retire le préfixe \x00img\x00 (5 chars)
                     yield f"data: {json.dumps({'img_url': img_url})}\n\n"
+                elif chunk.startswith('\x00think\x00'):
+                    think_text = chunk[7:]  # \x00think\x00 = 7 chars
+                    yield f"data: {json.dumps({'thinking': think_text})}\n\n"
+                elif chunk.startswith('{"__type"'):
+                    # Carte de confirmation — envoyer directement sans double-wrapping
+                    yield f"data: {chunk}\n\n"
                 else:
                     yield f"data: {json.dumps({'text': chunk})}\n\n"
         except Exception as exc:
@@ -194,6 +279,31 @@ async def chat(req: ChatRequest):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+class ConfirmRequest(BaseModel):
+    func:   str
+    params: dict = {}
+
+
+@app.post("/api/plugins/confirm")
+async def plugins_confirm(req: ConfirmRequest, request: Request):
+    """Exécute une action Proxmox après confirmation de l'utilisateur."""
+    from core.plugin_registry import plugin_registry as _pr
+    from core.async_runner import run_async
+    # Sécurité : seules les fonctions à confirmation sont exécutables ici
+    _ALLOWED = {
+        "vm_backup", "vm_power", "vm_snapshot", "vm_restore",
+        "node_reboot", "pbs_backup_run", "pbs_restore",
+    }
+    if req.func not in _ALLOWED:
+        return {"success": False, "message": f"Action '{req.func}' non autorisée via cet endpoint."}
+    try:
+        result = _pr.dispatch_action(req.func, req.params)
+        if result is None:
+            return {"success": False, "message": "Plugin introuvable pour cette action."}
+        return result
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 @app.get("/api/status")
@@ -663,6 +773,9 @@ async def page_home():
         lambda: unified_entity_service.get_unified_entities(force_refresh=True),
     )
 
+    # Exclure les entités caméra — elles ont leur propre vue dédiée
+    _EXCLUDED_TYPES = frozenset({"camera"})
+
     serialized = [
         {
             "id":       e.id,
@@ -678,6 +791,7 @@ async def page_home():
             },
         }
         for e in entities
+        if e.type not in _EXCLUDED_TYPES
     ]
 
     # Statuts providers : cross-référencer avec runtime_state (HA, Domoticz)
@@ -727,6 +841,43 @@ async def page_infrastructure():
     """État infrastructure pour la page desktop dédiée."""
     runtime_state.refresh()
     return runtime_state.get_infra_summary()
+
+
+# ---------------------------------------------------------------------------
+# Contrôle direct des entités domotiques
+# ---------------------------------------------------------------------------
+
+class _EntityToggle(BaseModel):
+    on: Optional[bool] = None   # None = toggle, True = allume, False = éteint
+
+@app.post("/api/entity/{entity_id}/toggle")
+async def entity_toggle(entity_id: str, body: _EntityToggle):
+    """Allume / éteint une entité domotique via le service unifié."""
+    import asyncio
+    from core.unified_entities import unified_entity_service
+    loop = asyncio.get_event_loop()
+    ok = await loop.run_in_executor(
+        None,
+        lambda: unified_entity_service.toggle_entity(entity_id, body.on)
+    )
+    return {"ok": ok, "entity_id": entity_id, "on": body.on}
+
+@app.post("/api/scene/{scene_name}")
+async def scene_activate(scene_name: str):
+    """Active une scène HA (scene.<scene_name>) ou tombe en silence si absente."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    ok = False
+    try:
+        from core.ha_control import ha_manager
+        ha_entity = f"scene.{scene_name}"
+        ok = await loop.run_in_executor(
+            None,
+            lambda: ha_manager.call_service("scene", "turn_on", ha_entity)
+        )
+    except Exception as e:
+        print(f"[scene_activate] {scene_name}: {e}")
+    return {"ok": ok, "scene": scene_name}
 
 
 # ---------------------------------------------------------------------------
@@ -868,9 +1019,13 @@ class _ServiceTagsBody(BaseModel):
     tags: list[str]
 
 
+class _UniverseBody(BaseModel):
+    universe: str = ''
+
+
 @app.get("/api/infra/services")
 async def list_infra_services():
-    """Retourne les services built-in avec statut, tags et flag hidden."""
+    """Retourne les services built-in avec statut, tags, hidden et universe."""
     from core.runtime_state import runtime_state, _BUILTIN_SERVICES, _load_service_overrides
     state = runtime_state.get_infra_summary()
     svcs = state.get("services", {})
@@ -885,6 +1040,7 @@ async def list_infra_services():
             "details": svc.get("details", ""),
             "tags": ov.get("tags", ["local"]),
             "hidden": ov.get("hidden", False),
+            "universe": ov.get("universe", ""),
             "builtin": True,
         })
     return result
@@ -901,6 +1057,34 @@ async def update_service_hidden_api(name: str, body: _ServiceHiddenBody):
 async def update_service_tags_api(name: str, body: _ServiceTagsBody):
     from core.runtime_state import update_service_tags
     update_service_tags(name, body.tags)
+    return {"ok": True}
+
+
+@app.patch("/api/infra/services/{name}/universe")
+async def update_service_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_service_universe
+    update_service_universe(name, body.universe)
+    return {"ok": True}
+
+
+@app.patch("/api/infra/endpoints/{name}/universe")
+async def update_endpoint_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_endpoint_universe
+    ok = update_endpoint_universe(name, body.universe)
+    return {"ok": ok}
+
+
+@app.get("/api/infra/docker/universes")
+async def get_docker_universes():
+    """Retourne la map container_name → universe."""
+    from core.runtime_state import _load_docker_universe
+    return _load_docker_universe()
+
+
+@app.patch("/api/infra/docker/{name}/universe")
+async def update_docker_universe_api(name: str, body: _UniverseBody):
+    from core.runtime_state import update_docker_universe
+    update_docker_universe(name, body.universe)
     return {"ok": True}
 
 
@@ -949,24 +1133,49 @@ async def _fetch_domoticz_cameras() -> list[dict]:
     return data.get("result", [])
 
 
+def _ha_cameras_as_list() -> list[dict]:
+    """Retourne les caméras HA sous le même format que Domoticz."""
+    from core.camera_manager import camera_manager
+    camera_manager.refresh()
+    return [
+        {"idx": ep.entity_id, "name": ep.friendly_name, "enabled": True}
+        for ep in camera_manager.list_endpoints()
+    ]
+
+
 @app.get("/api/cameras")
 async def list_cameras():
-    """Liste des caméras configurées dans Domoticz (sans mots de passe)."""
+    """Liste des caméras : Domoticz en priorité, HA en fallback."""
     try:
         cams = await _fetch_domoticz_cameras()
-        return {
-            "cameras": [
-                {"idx": c["idx"], "name": c["Name"], "enabled": c.get("Enabled") == "true"}
-                for c in cams
-            ]
-        }
+        if cams:
+            return {
+                "cameras": [
+                    {"idx": c["idx"], "name": c["Name"], "enabled": c.get("Enabled") == "true"}
+                    for c in cams
+                ]
+            }
+    except Exception:
+        pass
+    # Fallback Home Assistant
+    try:
+        return {"cameras": _ha_cameras_as_list(), "source": "ha"}
     except Exception as exc:
         return {"cameras": [], "error": str(exc)}
 
 
 @app.get("/api/cameras/{idx}/snapshot")
 async def camera_snapshot(idx: str):
-    """Proxy JPEG du snapshot Reolink pour la caméra Domoticz {idx}."""
+    """Proxy JPEG du snapshot — Domoticz/Reolink ou HA selon la source."""
+    # Caméra HA (entity_id commence par "camera.")
+    if str(idx).startswith("camera."):
+        jpg = ha_manager.get_camera_snapshot(idx)
+        if jpg is None:
+            raise HTTPException(status_code=502, detail="Snapshot HA indisponible.")
+        return Response(content=jpg, media_type="image/jpeg",
+                        headers={"Cache-Control": "no-store, no-cache"})
+
+    # Caméra Domoticz
     try:
         cams = await _fetch_domoticz_cameras()
     except Exception as exc:
@@ -1000,26 +1209,30 @@ async def camera_analyze(idx: str, req: CameraAnalyzeRequest):
     import base64
     from config import OLLAMA_URL
 
-    # 1. Récupérer la config caméra
-    try:
-        cams = await _fetch_domoticz_cameras()
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Domoticz inaccessible : {exc}")
-    cam = next((c for c in cams if str(c.get("idx")) == str(idx)), None)
-    if not cam:
-        raise HTTPException(status_code=404, detail=f"Caméra {idx} introuvable.")
-
-    # 2. Snapshot
-    protocol = "https" if cam.get("Protocol", 0) == 1 else "http"
-    snap_url = f"{protocol}://{cam['Address']}:{cam['Port']}/{cam['ImageURL']}"
-    try:
-        async with httpx.AsyncClient(timeout=12, verify=_REOLINK_SSL) as client:
-            snap = await client.get(snap_url)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Caméra injoignable : {exc}")
-    if snap.status_code != 200:
-        raise HTTPException(status_code=502, detail="Snapshot indisponible.")
-    img_b64 = base64.b64encode(snap.content).decode()
+    # 1. Récupérer le snapshot (HA ou Domoticz)
+    if str(idx).startswith("camera."):
+        jpg = ha_manager.get_camera_snapshot(idx)
+        if jpg is None:
+            raise HTTPException(status_code=502, detail="Snapshot HA indisponible.")
+        img_b64 = base64.b64encode(jpg).decode()
+    else:
+        try:
+            cams = await _fetch_domoticz_cameras()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Domoticz inaccessible : {exc}")
+        cam = next((c for c in cams if str(c.get("idx")) == str(idx)), None)
+        if not cam:
+            raise HTTPException(status_code=404, detail=f"Caméra {idx} introuvable.")
+        protocol = "https" if cam.get("Protocol", 0) == 1 else "http"
+        snap_url = f"{protocol}://{cam['Address']}:{cam['Port']}/{cam['ImageURL']}"
+        try:
+            async with httpx.AsyncClient(timeout=12, verify=_REOLINK_SSL) as client:
+                snap = await client.get(snap_url)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Caméra injoignable : {exc}")
+        if snap.status_code != 200:
+            raise HTTPException(status_code=502, detail="Snapshot indisponible.")
+        img_b64 = base64.b64encode(snap.content).decode()
 
     # 3. Stream gemma4 vision
     vision_model = settings.get("models.vision", "gemma4:latest") or "gemma4:latest"
@@ -1457,3 +1670,133 @@ async def get_tagged_items(company_id: str):
                   "details": live_services.get(ep["name"], {}).get("details", "")} for ep in raw_eps]
     marketing = [h for h in get_history(limit=200) if company_id in h.get("tags", [])]
     return {"endpoints": endpoints, "marketing": marketing}
+
+
+# ---------------------------------------------------------------------------
+# MODULE_SKILLS: API AutoSkills (SQLite FTS5)
+# Préfixe /api/autoskills/ pour éviter le conflit avec /api/skills (SKILL.md)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/autoskills")
+async def api_skills_list(status: str = "active", domain: str | None = None):
+    """Liste les autoskills selon status (active|archived) et domaine optionnel."""
+    return {"skills": _skills_list(status=status, domain=domain)}
+
+
+@app.get("/api/autoskills/{skill_id}")
+async def api_skills_get(skill_id: str):
+    """Récupère une autoskill par ID."""
+    skill = _skills_get(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    return skill
+
+
+@app.post("/api/autoskills")
+async def api_skills_create(body: dict):
+    """Crée ou met à jour une autoskill."""
+    name = body.get("name", "").strip()
+    content = body.get("content", "").strip()
+    if not name or not content:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="name et content requis")
+    skill_id = _skills_save(
+        name=name,
+        content=content,
+        domain=body.get("domain", "core"),
+        source=body.get("source", "manual"),
+        summary=body.get("summary", ""),
+        priority=int(body.get("priority", 5)),
+        skill_id=body.get("id"),
+    )
+    return {"id": skill_id, "ok": True}
+
+
+@app.patch("/api/autoskills/{skill_id}/archive")
+async def api_skills_archive(skill_id: str):
+    """Archive une autoskill."""
+    ok = _skills_archive(skill_id)
+    return {"ok": ok}
+
+
+@app.patch("/api/autoskills/{skill_id}/restore")
+async def api_skills_restore(skill_id: str):
+    """Restaure une autoskill archivée."""
+    ok = _skills_restore(skill_id)
+    return {"ok": ok}
+
+
+@app.patch("/api/autoskills/{skill_id}/promote")
+async def api_skills_promote(skill_id: str, body: dict | None = None):
+    """Monte la priorité d'une autoskill."""
+    new_priority = (body or {}).get("priority")
+    ok = _skills_promote(skill_id, new_priority=new_priority)
+    return {"ok": ok}
+
+
+@app.delete("/api/autoskills/{skill_id}")
+async def api_skills_delete(skill_id: str):
+    """Supprime une autoskill (refusé si protégée)."""
+    ok = _skills_delete(skill_id)
+    if not ok:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Skill protégée ou introuvable")
+    return {"ok": True}
+
+
+@app.patch("/api/autoskills/{skill_id}")
+async def api_skills_update(skill_id: str, body: dict):
+    """Mise à jour partielle d'une autoskill (name, summary, content, priority, domain)."""
+    skill = _skills_get(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    updated_id = _skills_save(
+        skill_id=skill_id,
+        name=body.get("name", skill["name"]),
+        content=body.get("content", skill["content"]),
+        domain=body.get("domain", skill["domain"]),
+        source=skill.get("source", "manual"),
+        summary=body.get("summary", skill.get("summary", "")),
+        priority=int(body.get("priority", skill["priority"])),
+    )
+    return {"id": updated_id, "ok": True}
+
+
+@app.post("/api/autoskills/{skill_id}/feedback")
+async def api_skills_feedback(skill_id: str, body: dict):
+    """Enregistre un feedback utilisateur sur une autoskill."""
+    feedback = body.get("feedback", "").strip()
+    if feedback not in ("positive", "negative", "neutral"):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="feedback doit être positive|negative|neutral")
+    from core.skills import get_skill
+    skill = get_skill(skill_id)
+    if skill is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Skill introuvable")
+    # Feedback positif → record_success (incrémente usage + auto-promotion)
+    if feedback == "positive":
+        from core.skills import record_success
+        record_success(skill_id)
+    # Stocker dans autoskill_feedback
+    try:
+        from core.skills.skills_db import get_connection
+        conn = get_connection()
+        conn.execute(
+            "INSERT INTO autoskill_feedback (skill_id, session_id, request_id, feedback, reason) VALUES (?,?,?,?,?)",
+            (skill_id, body.get("session_id"), body.get("request_id"), feedback, body.get("reason", "")),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return {"ok": True, "feedback": feedback}
+
+
+@app.post("/api/autoskills/maintenance")
+async def api_skills_maintenance():
+    """Lance la maintenance manuelle des autoskills."""
+    result = _skills_maintenance()
+    return result

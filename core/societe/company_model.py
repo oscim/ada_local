@@ -97,81 +97,9 @@ CREATE TABLE IF NOT EXISTS company_documents (
 """
 
 _SEED_COMPANIES: list[dict] = [
-    {
-        "id": "opentechno",
-        "name": "OpenTechno",
-        "logo": "🔷",
-        "color": "#5E6AD2",
-        "type": "SAS",
-        "status": "active",
-        "address": "12 rue des Développeurs, Paris",
-        "email": "contact@opentechno.fr",
-        "website": "https://opentechno.fr",
-        "notes": "Client historique, DSI externalisée.",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "uscss",
-        "name": "USCSS",
-        "logo": "🚀",
-        "color": "#E86C3A",
-        "type": "SARL",
-        "status": "active",
-        "address": "3 avenue de l'Innovation, Lyon",
-        "email": "rh@uscss.fr",
-        "website": "https://uscss.fr",
-        "notes": "Contrat maintenance annuel.",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "margepro",
-        "name": "MargePro",
-        "logo": "💰",
-        "color": "#16A349",
-        "type": "EI",
-        "status": "active",
-        "address": "8 boulevard Commerce, Bordeaux",
-        "email": "direction@margepro.fr",
-        "website": "https://margepro.fr",
-        "notes": "Partenaire revendeur principal.",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
-    {
-        "id": "nexagen",
-        "name": "NexaGen",
-        "logo": "🌐",
-        "color": "#7C3AED",
-        "type": "SAS",
-        "status": "active",
-        "address": "47 allée Numérique, Toulouse",
-        "email": "biz@nexagen.io",
-        "website": "https://nexagen.io",
-        "notes": "Prospect chaud — démo planifiée.",
-        "connectors_json": '{"dolibarr": {"enabled": false}}',
-    },
 ]
 
 _SEED_METRICS: list[dict] = [
-    # OpenTechno
-    {"company_id": "opentechno", "metric_key": "ca_ytd",         "metric_value": 142000},
-    {"company_id": "opentechno", "metric_key": "unpaid",         "metric_value": 8400},
-    {"company_id": "opentechno", "metric_key": "open_tickets",   "metric_value": 3},
-    {"company_id": "opentechno", "metric_key": "quotes_pending", "metric_value": 2},
-    # USCSS
-    {"company_id": "uscss",      "metric_key": "ca_ytd",         "metric_value": 87500},
-    {"company_id": "uscss",      "metric_key": "unpaid",         "metric_value": 0},
-    {"company_id": "uscss",      "metric_key": "open_tickets",   "metric_value": 1},
-    {"company_id": "uscss",      "metric_key": "quotes_pending", "metric_value": 1},
-    # MargePro
-    {"company_id": "margepro",   "metric_key": "ca_ytd",         "metric_value": 220000},
-    {"company_id": "margepro",   "metric_key": "unpaid",         "metric_value": 0},
-    {"company_id": "margepro",   "metric_key": "open_tickets",   "metric_value": 0},
-    {"company_id": "margepro",   "metric_key": "quotes_pending", "metric_value": 4},
-    # NexaGen
-    {"company_id": "nexagen",    "metric_key": "ca_ytd",         "metric_value": 0},
-    {"company_id": "nexagen",    "metric_key": "unpaid",         "metric_value": 0},
-    {"company_id": "nexagen",    "metric_key": "open_tickets",   "metric_value": 0},
-    {"company_id": "nexagen",    "metric_key": "quotes_pending", "metric_value": 1},
 ]
 
 
