@@ -1,0 +1,27 @@
+.git
+.github
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+venv
+env
+.env
+.env.*
+!.env.docker.example
+node_modules
+.pytest_cache
+.mypy_cache
+.ruff_cache
+dist
+build
+*.egg-info
+# Données à externaliser. Elles peuvent être montées par docker-compose.
+data
+documents
+rag
+models
+web/certs
+.cache

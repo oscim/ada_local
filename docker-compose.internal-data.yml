@@ -1,0 +1,16 @@
+# Mode simple / test : aucun bind-mount pour les données ADA.
+# Les dossiers existent dans l'image, mais tout ce qui est écrit disparaît avec le conteneur.
+services:
+  ada:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ada-local-web:latest
+    container_name: ada-local-web
+    restart: unless-stopped
+    env_file:
+      - .env.docker
+    ports:
+      - "${ADA_PUBLISHED_WEB_PORT:-7654}:${ADA_WEB_PORT:-7654}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

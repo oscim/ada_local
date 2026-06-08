@@ -1,0 +1,172 @@
+--- a/config.py
++++ b/config.py
+@@ -2,26 +2,64 @@
+ Centralized configuration for Pocket AI.
+ """
+ 
++import os
++from pathlib import Path
++
++
++def _env_bool(name: str, default: bool) -> bool:
++    value = os.getenv(name)
++    if value is None or value == "":
++        return default
++    return value.strip().lower() in {"1", "true", "yes", "on", "y"}
++
++
++def _env_int(name: str, default: int) -> int:
++    value = os.getenv(name)
++    try:
++        return int(value) if value not in (None, "") else default
++    except ValueError:
++        return default
++
++
++def _env_float(name: str, default: float) -> float:
++    value = os.getenv(name)
++    try:
++        return float(value) if value not in (None, "") else default
++    except ValueError:
++        return default
++
++
++# --- Docker / externalized paths ---
++# Ces dossiers existent dans l'image pour un fonctionnement autonome.
++# En production, ils doivent de préférence être bind-mountés depuis l'hôte.
++ADA_DATA_DIR = Path(os.getenv("ADA_DATA_DIR", "data"))
++ADA_SKILLS_DIR = Path(os.getenv("ADA_SKILLS_DIR", "skills"))
++ADA_DOCUMENTS_DIR = Path(os.getenv("ADA_DOCUMENTS_DIR", "documents"))
++ADA_RAG_DIR = Path(os.getenv("ADA_RAG_DIR", "rag"))
++ADA_MODELS_DIR = Path(os.getenv("ADA_MODELS_DIR", "models"))
++ADA_CACHE_DIR = Path(os.getenv("ADA_CACHE_DIR", ".cache"))
++ADA_CERTS_DIR = Path(os.getenv("ADA_CERTS_DIR", "web/certs"))
++
+ # --- Intent Mining (extraction corpus depuis Radar) ---
+-INTENT_MINING_ENABLED: bool = True
+-INTENT_MINING_AUTO_RUN_ON_STARTUP: bool = True
+-INTENT_MINING_PERIODIC_INTERVAL_MINUTES: int = 60
+-INTENT_MINING_DB_PATH: str = "data/intent_corpus.sqlite"
++INTENT_MINING_ENABLED: bool = _env_bool("INTENT_MINING_ENABLED", True)
++INTENT_MINING_AUTO_RUN_ON_STARTUP: bool = _env_bool("INTENT_MINING_AUTO_RUN_ON_STARTUP", True)
++INTENT_MINING_PERIODIC_INTERVAL_MINUTES: int = _env_int("INTENT_MINING_PERIODIC_INTERVAL_MINUTES", 60)
++INTENT_MINING_DB_PATH: str = os.getenv("INTENT_MINING_DB_PATH", str(ADA_DATA_DIR / "intent_corpus.sqlite"))
+ 
+ # --- Intent Detection ---
+-INTENT_DETECTION_ENABLED: bool = True
+-INTENT_DETECTION_THRESHOLD_CERTAIN: float = 0.92
+-INTENT_DETECTION_THRESHOLD_CANDIDATE: float = 0.75
+-INTENT_DETECTION_MAX_CORPUS_SIZE: int = 5000
+-INTENT_DETECTION_UNIVERSE_FILTER: bool = True
+-INTENT_DETECTION_INDEX_REBUILD_ON_FEEDBACK: bool = True
++INTENT_DETECTION_ENABLED: bool = _env_bool("INTENT_DETECTION_ENABLED", True)
++INTENT_DETECTION_THRESHOLD_CERTAIN: float = _env_float("INTENT_DETECTION_THRESHOLD_CERTAIN", 0.92)
++INTENT_DETECTION_THRESHOLD_CANDIDATE: float = _env_float("INTENT_DETECTION_THRESHOLD_CANDIDATE", 0.75)
++INTENT_DETECTION_MAX_CORPUS_SIZE: int = _env_int("INTENT_DETECTION_MAX_CORPUS_SIZE", 5000)
++INTENT_DETECTION_UNIVERSE_FILTER: bool = _env_bool("INTENT_DETECTION_UNIVERSE_FILTER", True)
++INTENT_DETECTION_INDEX_REBUILD_ON_FEEDBACK: bool = _env_bool("INTENT_DETECTION_INDEX_REBUILD_ON_FEEDBACK", True)
+ 
+ # --- Radar Local Event Console ---
+-RADAR_ENABLED: bool = True
+-RADAR_DB_PATH: str = "data/radar/events.sqlite"
+-RADAR_MAX_EVENTS: int = 100_000
+-RADAR_RETENTION_DAYS: int = 30
+-RADAR_TEXT_PREVIEW_MAX: int = 300
++RADAR_ENABLED: bool = _env_bool("RADAR_ENABLED", True)
++RADAR_DB_PATH: str = os.getenv("RADAR_DB_PATH", str(ADA_DATA_DIR / "radar" / "events.sqlite"))
++RADAR_MAX_EVENTS: int = _env_int("RADAR_MAX_EVENTS", 100_000)
++RADAR_RETENTION_DAYS: int = _env_int("RADAR_RETENTION_DAYS", 30)
++RADAR_TEXT_PREVIEW_MAX: int = _env_int("RADAR_TEXT_PREVIEW_MAX", 300)
+ RADAR_SENSITIVE_FIELDS: list = [
+     "api_key", "token", "access_token", "refresh_token",
+     "authorization", "password", "secret", "cookie",
+@@ -29,20 +67,20 @@
+ ]
+ 
+ # --- Model Configuration ---
+-RESPONDER_MODEL = "mistral:latest"
+-OLLAMA_URL = "http://localhost:11434/api"
++RESPONDER_MODEL = os.getenv("RESPONDER_MODEL", "mistral:latest")
++OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434/api")
+ 
+ # --- Marketing / MargePro ---
+ # Modèle utilisé pour la génération marketing (peut être différent du modèle principal)
+ # Ex : "deepseek-r1:7b", "mistral:7b", "llama3.1:8b" pour de meilleures copies
+-MARKETING_MODEL = RESPONDER_MODEL  # Même modèle par défaut, remplace si besoin
++MARKETING_MODEL = os.getenv("MARKETING_MODEL", RESPONDER_MODEL)  # Même modèle par défaut, remplace si besoin
+ 
+ # Contexte produit MargePro — chargé dynamiquement depuis skills/margepro/SKILL.md
+ # Édite ce fichier depuis l'onglet Compétences de l'UI pour mettre à jour le contexte.
+ def _load_margepro_context() -> str:
+     import re as _re
+     from pathlib import Path as _Path
+-    skill_path = _Path(__file__).parent / "skills" / "margepro" / "SKILL.md"
++    skill_path = _Path(os.getenv("ADA_SKILLS_DIR", str(_Path(__file__).parent / "skills"))) / "margepro" / "SKILL.md"
+     try:
+         raw = skill_path.read_text(encoding="utf-8")
+         # Retire le frontmatter YAML (entre les deux ---)
+@@ -52,9 +90,9 @@
+         return ""
+ 
+ MARGEPRO_CONTEXT = _load_margepro_context()
+-LOCAL_ROUTER_PATH = "./merged_model"
+-HF_ROUTER_REPO = "nlouis/pocket-ai-router"  # Hugging Face repo for auto-download
+-MAX_HISTORY = 20
++LOCAL_ROUTER_PATH = os.getenv("LOCAL_ROUTER_PATH", str(ADA_MODELS_DIR / "merged_model"))
++HF_ROUTER_REPO = os.getenv("HF_ROUTER_REPO", "nlouis/pocket-ai-router")  # Hugging Face repo for auto-download
++MAX_HISTORY = _env_int("MAX_HISTORY", 20)
+ 
+ # --- TTS Configuration ---
+ TTS_VOICE_MODEL = "en_GB-northern_english_male-medium"
+@@ -78,9 +116,9 @@
+ STT_RECORD_TIMEOUT = 5.0  # Maximum seconds to record after wake word
+ 
+ # --- Voice Assistant Configuration ---
+-VOICE_ASSISTANT_ENABLED = True
+-QWEN_TIMEOUT_SECONDS = 300  # 5 minutes of inactivity before sleep
+-QWEN_KEEP_ALIVE = "5m"  # Keep in memory for 5 minutes after last use
++VOICE_ASSISTANT_ENABLED = _env_bool("VOICE_ASSISTANT_ENABLED", True)
++QWEN_TIMEOUT_SECONDS = _env_int("QWEN_TIMEOUT_SECONDS", 300)  # 5 minutes of inactivity before sleep
++QWEN_KEEP_ALIVE = os.getenv("QWEN_KEEP_ALIVE", "5m")  # Keep in memory for 5 minutes after last use
+ 
+ # --- Router Keywords ---
+ # REMOVED: ROUTER_KEYWORDS - All queries now go through Function Gemma router
+@@ -308,25 +346,25 @@
+ 
+ # --- N8N Bridge ---
+ N8N_BRIDGE_ENABLED           = True
+-N8N_BASE_URL                 = "http://localhost:5678"
+-N8N_DEFAULT_WEBHOOK_URL      = "http://localhost:5678/webhook/ada-event"
+-N8N_TIMEOUT_SECONDS          = 10
+-N8N_MAX_RETRIES              = 2
+-N8N_VERIFY_SSL               = True
+-N8N_FALLBACK_ENABLED         = True
++N8N_BASE_URL                 = os.getenv("N8N_BASE_URL", "http://localhost:5678")
++N8N_DEFAULT_WEBHOOK_URL      = os.getenv("N8N_DEFAULT_WEBHOOK_URL", f"{N8N_BASE_URL.rstrip('/')}/webhook/ada-event")
++N8N_TIMEOUT_SECONDS          = _env_int("N8N_TIMEOUT_SECONDS", 10)
++N8N_MAX_RETRIES              = _env_int("N8N_MAX_RETRIES", 2)
++N8N_VERIFY_SSL               = _env_bool("N8N_VERIFY_SSL", True)
++N8N_FALLBACK_ENABLED         = _env_bool("N8N_FALLBACK_ENABLED", True)
+ N8N_ALLOWED_EVENT_DOMAINS: list = [
+     "domotic", "marketing", "social", "lead", "crm",
+     "support", "content", "notification", "workflow", "system",
+ ]
+ 
+ # --- Feedback Loop & Auto-tuning ---
+-FEEDBACK_ENABLED: bool = True
+-FEEDBACK_AUTOSKILL_VALIDATE_THRESHOLD: int = 3   # validations pour promouvoir 'confirmed'
+-FEEDBACK_AUTOSKILL_REJECT_THRESHOLD: int = 2     # rejets pour 'under_review'
+-FEEDBACK_REBUILD_TRIGGER_POSITIVE: int = 10      # signaux positifs avant rebuild index
+-FEEDBACK_REBUILD_TRIGGER_NEGATIVE: int = 3       # signaux négatifs avant rebuild index
+-FEEDBACK_ERROR_LOG_AUTO_RADAR: bool = True       # alimentation auto depuis Radar
+-FEEDBACK_ERROR_LOG_RETENTION_DAYS: int = 90
++FEEDBACK_ENABLED: bool = _env_bool("FEEDBACK_ENABLED", True)
++FEEDBACK_AUTOSKILL_VALIDATE_THRESHOLD: int = _env_int("FEEDBACK_AUTOSKILL_VALIDATE_THRESHOLD", 3)   # validations pour promouvoir 'confirmed'
++FEEDBACK_AUTOSKILL_REJECT_THRESHOLD: int = _env_int("FEEDBACK_AUTOSKILL_REJECT_THRESHOLD", 2)     # rejets pour 'under_review'
++FEEDBACK_REBUILD_TRIGGER_POSITIVE: int = _env_int("FEEDBACK_REBUILD_TRIGGER_POSITIVE", 10)      # signaux positifs avant rebuild index
++FEEDBACK_REBUILD_TRIGGER_NEGATIVE: int = _env_int("FEEDBACK_REBUILD_TRIGGER_NEGATIVE", 3)       # signaux négatifs avant rebuild index
++FEEDBACK_ERROR_LOG_AUTO_RADAR: bool = _env_bool("FEEDBACK_ERROR_LOG_AUTO_RADAR", True)       # alimentation auto depuis Radar
++FEEDBACK_ERROR_LOG_RETENTION_DAYS: int = _env_int("FEEDBACK_ERROR_LOG_RETENTION_DAYS", 90)
+ 
+ # --- Console Colors ---
+ GRAY = "\033[90m"

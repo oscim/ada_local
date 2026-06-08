@@ -1,0 +1,6 @@
+# Override optionnel pour exposer le port callback HTTP interne.
+# À utiliser uniquement si ADA_HTTP_CALLBACK_PORT est différent de 0.
+services:
+  ada:
+    ports:
+      - "${ADA_PUBLISHED_CALLBACK_PORT:-7655}:${ADA_HTTP_CALLBACK_PORT:-7655}"

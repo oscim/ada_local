@@ -1,0 +1,57 @@
+--- a/web_server.py
++++ b/web_server.py
+@@ -24,6 +24,21 @@
+ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+ 
+ import uvicorn
++
++
++def _env_bool(name: str, default: bool) -> bool:
++    value = os.getenv(name)
++    if value is None or value == "":
++        return default
++    return value.strip().lower() in {"1", "true", "yes", "on", "y"}
++
++
++def _env_int(name: str, default: int) -> int:
++    value = os.getenv(name)
++    try:
++        return int(value) if value not in (None, "") else default
++    except ValueError:
++        return default
+ 
+ 
+ def _local_ips() -> list[str]:
+@@ -99,23 +114,27 @@
+ 
+ def main():
+     parser = argparse.ArgumentParser(description="ADA Mobile Web Server")
+-    parser.add_argument("--host", default="0.0.0.0")
+-    parser.add_argument("--port", type=int, default=7654)
++    parser.add_argument("--host", default=os.getenv("ADA_HOST", "0.0.0.0"))
++    parser.add_argument("--port", type=int, default=_env_int("ADA_WEB_PORT", 7654))
+     parser.add_argument(
+         "--no-ssl",
+         action="store_true",
++        default=not _env_bool("ADA_WEB_SSL", True),
+         help="Forcer HTTP — le micro ne fonctionnera PAS sur mobile",
+     )
+     parser.add_argument("--reload", action="store_true", help="Dev: rechargement auto")
+     parser.add_argument(
+-        "--http-callback-port", type=int, default=7655,
++        "--http-callback-port", type=int, default=_env_int("ADA_HTTP_CALLBACK_PORT", 7655),
+         help="Port HTTP interne pour les callbacks services (n8n, HA…). 0 = désactivé.",
+     )
+     args = parser.parse_args()
+ 
+     root = Path(__file__).parent
+-    cert_path = root / "web" / "certs" / "cert.pem"
+-    key_path = root / "web" / "certs" / "key.pem"
++    certs_dir = Path(os.getenv("ADA_CERTS_DIR", str(root / "web" / "certs")))
++    if not certs_dir.is_absolute():
++        certs_dir = root / certs_dir
++    cert_path = certs_dir / "cert.pem"
++    key_path = certs_dir / "key.pem"
+ 
+     use_ssl = not args.no_ssl
+     if use_ssl:
