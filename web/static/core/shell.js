@@ -59,16 +59,26 @@ async function _onAuthenticated(){
   const _dashCtx=_UNI_CTX&&_UNI_CTX.dash;
   _activeCtxText=_dashCtx?_dashCtx.text||'':'';
   _activeDomain=_dashCtx?_dashCtx.domain:null;
-  await _loadProfile();
+  const profile=await _fetchProfile();
+  _applyProfile(profile);
   await _buildNavFromUniverses();
   await _loadStatus();
   _initChatModelSel();
-  _loadSubView('sub-dash-overview','dashboard');
+  // Charger le premier onglet du dashboard (dynamique ou statique)
+  const firstDashStab=document.querySelector('#uni-dash .stab');
+  const firstDashSubId=firstDashStab?.getAttribute('onclick')?.match(/goSub\(this,'([^']+)'\)/)?.[1];
+  if(firstDashSubId&&_VIEW_OVERRIDES[firstDashSubId]){
+    const[v,o]=_VIEW_OVERRIDES[firstDashSubId];
+    _loadSubView(firstDashSubId,v,o);
+  } else {
+    _loadSubView('sub-dash-overview','dashboard');
+  }
   _renderPluginCtxBar('dash');
 }
 
-// ── Construction dynamique de la nav depuis /api/universes ────────
+// ── Construction dynamique de la nav depuis le profil (ou /api/universes en fallback) ────────
 async function _buildNavFromUniverses(){
+  // Toujours charger la liste globale ordonnée par position (pas de filtre profil)
   let universes=[];
   try{
     const token=_getToken();
@@ -78,27 +88,64 @@ async function _buildNavFromUniverses(){
   }catch{}
   if(!universes.length)return;
 
-  const nav=document.getElementById('nav');
   const content=document.getElementById('content');
   const dynSlot=document.getElementById('dyn-nav-btns');
-  if(!nav||!content||!dynSlot)return;
+  if(!content||!dynSlot)return;
 
-  // Nettoyage des éléments précédents
   dynSlot.innerHTML='';
   content.querySelectorAll('.uni-panel-dyn').forEach(el=>el.remove());
 
   for(const u of universes){
-    const isDash=u.modules&&u.modules.includes('dashboard');
-    if(isDash){
-      // Mettre à jour le label du dashboard si renommé
-      UNI_LABELS['dash']=u.name||'Dashboard';
-      continue;
-    }
-
     const uId=u.id;
     UNI_LABELS[uId]=u.name;
 
-    // Nav sep + btn
+    const isDash=u.modules&&u.modules.includes('dashboard');
+    if(isDash){
+      UNI_LABELS['dash']=u.name||'Dashboard';
+      // Mettre à jour le texte du bouton statique si renommé
+      const staticBtn=document.querySelector('[data-uni="dash"]');
+      if(staticBtn){
+        const tip=staticBtn.querySelector('.nav-tip');
+        const lbl=staticBtn.querySelector('.nav-label');
+        if(tip) tip.textContent=u.name;
+        if(lbl) lbl.textContent=u.name;
+      }
+      // Construire les onglets de uni-dash dynamiquement (sub IDs statiques de _MOD_TAB)
+      const dashPanel=document.getElementById('uni-dash');
+      if(dashPanel){
+        const tabs=[];
+        for(const modId of (u.modules||[])){
+          const def=_MOD_TAB[modId];
+          if(!def)continue;
+          tabs.push({...def,modId});
+        }
+        if(tabs.length){
+          dashPanel.querySelectorAll('.subtab-bar').forEach(el=>el.remove());
+          const tabBar=document.createElement('div');
+          tabBar.className='subtab-bar';
+          tabBar.innerHTML=tabs.map((t,i)=>
+            `<div class="stab${i===0?' on':''}" onclick="goSub(this,'${t.sub}')">${t.label}</div>`
+          ).join('');
+          dashPanel.insertBefore(tabBar,dashPanel.firstChild);
+          tabs.forEach((t,i)=>{
+            if(!document.getElementById(t.sub)){
+              const sv=document.createElement('div');
+              sv.className='subview'+(i===0?' on':'');
+              sv.id=t.sub;
+              dashPanel.appendChild(sv);
+            }
+            if(t.view) _VIEW_OVERRIDES[t.sub]=[t.view,t.opts||{}];
+            _VIEW_LABELS[t.sub]=t.label;
+            // Maintenir _V2U pour adaNavigate
+            if(t.modId==='dashboard') _V2U[t.modId]='dash';
+            else _V2U[t.modId]=['dash',t.sub];
+          });
+        }
+      }
+      continue;
+    }
+
+    // Panel dynamique normal
     const sep=document.createElement('div');
     sep.className='nav-sep';
     const btn=document.createElement('div');
@@ -109,24 +156,20 @@ async function _buildNavFromUniverses(){
     dynSlot.appendChild(sep);
     dynSlot.appendChild(btn);
 
-    // Uni-panel
     const panel=document.createElement('div');
     panel.className='uni-panel uni-panel-dyn';
     panel.id='uni-'+uId;
     content.appendChild(panel);
 
-    // Construire les onglets depuis les modules
     const tabs=[];
     for(const modId of (u.modules||[])){
       const def=_MOD_TAB[modId];
       if(!def)continue;
-      // Subview unique par univers pour éviter les conflits d'ID
       const subId=uId+'-'+modId;
       tabs.push({...def,modId,sub:subId});
     }
     if(!tabs.length)continue;
 
-    // Subtab-bar
     const tabBar=document.createElement('div');
     tabBar.className='subtab-bar';
     tabBar.innerHTML=tabs.map((t,i)=>
@@ -134,7 +177,6 @@ async function _buildNavFromUniverses(){
     ).join('');
     panel.appendChild(tabBar);
 
-    // Subview divs
     tabs.forEach((t,i)=>{
       const sv=document.createElement('div');
       sv.className='subview'+(i===0?' on':'');
@@ -142,50 +184,57 @@ async function _buildNavFromUniverses(){
       panel.appendChild(sv);
       if(t.view) _VIEW_OVERRIDES[t.sub]=[t.view,t.opts||{}];
       _VIEW_LABELS[t.sub]=t.label;
+      // Maintenir _V2U pour adaNavigate (remplace les anciens IDs statiques)
+      _V2U[t.modId]=[uId,t.sub];
     });
   }
 }
 
 // ── Module → sous-vue (onglets dynamiques par univers) ──────────
 const _MOD_TAB = {
-  'home':           {sub:'sub-domo',         label:'Domotique'},
-  'cameras':        {sub:'sub-cameras',      label:'Caméras'},
-  'senses':         {sub:'sub-senses',       label:'Capteurs',      view:'page',    opts:{page:'senses',hint:'État capteurs'}},
-  'music':          {sub:'sub-music',        label:'Musique',       view:'page',    opts:{page:'music',hint:'Lecteur musique'}},
-  'infrastructure': {sub:'sub-infra',        label:'Infrastructure',view:'infra',   opts:{}},
-  'societe':        {sub:'sub-soc',          label:'Sociétés',      view:'societe', opts:{}},
+  'home':           {sub:'sub-domo',         label:'Domotique',     view:'page',     opts:{page:'home',hint:'État domotique complet'}},
+  'cameras':        {sub:'sub-cameras',      label:'Caméras',       view:'cameras',  opts:{}},
+  'senses':         {sub:'sub-senses',       label:'Capteurs',      view:'page',     opts:{page:'senses',hint:'État capteurs'}},
+  'music':          {sub:'sub-music',        label:'Musique',       view:'page',     opts:{page:'music',hint:'Lecteur musique'}},
+  'infrastructure': {sub:'sub-infra',        label:'Infrastructure',view:'infra',    opts:{}},
+  'societe':        {sub:'sub-soc',          label:'Sociétés',      view:'societe',  opts:{}},
   'marketing':      {sub:'sub-mkt',          label:'Marketing',     view:'marketing',opts:{}},
-  'planner':        {sub:'sub-agenda',       label:'Agenda',        view:'planner', opts:{}},
-  'briefing':       {sub:'sub-briefing',     label:'Briefing',      view:'briefing',opts:{}},
-  'skills':         {sub:'sub-skills',       label:'Compétences',   view:'skills',  opts:{}},
-  'memory':         {sub:'sub-mem',          label:'Mémoire',       view:'memory',  opts:{}},
-  'settings':       {sub:'sub-settings',     label:'Paramètres',    view:'settings',opts:{}},
-  'printers':       {sub:'sub-rmm',          label:'RMM',           view:'page',    opts:{page:'printers',hint:'RMM clients actifs'}},
-  'dashboard':      {sub:'sub-dash-overview',label:"Vue d'ensemble", view:'dashboard',opts:{}},
+  'planner':        {sub:'sub-agenda',       label:'Agenda',        view:'planner',  opts:{}},
+  'briefing':       {sub:'sub-briefing',     label:'Briefing',      view:'briefing', opts:{}},
+  'skills':         {sub:'sub-skills',       label:'Compétences',   view:'skills',   opts:{}},
+  'memory':         {sub:'sub-mem',          label:'Mémoire',       view:'memory',   opts:{}},
+  'settings':       {sub:'sub-settings',     label:'Paramètres',    view:'settings', opts:{}},
+  'printers':       {sub:'sub-rmm',          label:'RMM',           view:'page',     opts:{page:'printers',hint:'RMM clients actifs'}},
+  'webagent':       {sub:'sub-webagent',     label:'Web Agent',     view:'webagent', opts:{}},
+  'dashboard':      {sub:'sub-dash-overview',label:"Vue d'ensemble",view:'dashboard',opts:{}},
 };
 // Registres des vues dynamiques
 const _VIEW_OVERRIDES = {};  // subId → [viewName, opts]
 const _VIEW_LABELS    = {};  // subId → label (breadcrumb)
 
-// ── Profil (thème + densité depuis /api/profile) ─────────────────
-async function _loadProfile(){
-  const token=_getToken();
-  if(!token)return;
+// ── Profil (thème + densité + univers depuis /api/profile) ───────
+async function _fetchProfile(){
   try{
-    const r=await fetch('/api/profile',{headers:{'Authorization':'Bearer '+token}});
-    if(!r.ok)return;
+    const token=_getToken();
+    const h=token?{'Authorization':'Bearer '+token}:{};
+    const r=await fetch('/api/profile',{headers:h});
+    if(!r.ok)return null;
     const p=await r.json();
-    const prof=p.profile||p;
-    if(prof.theme){
-      document.documentElement.setAttribute('data-theme',prof.theme);
-      document.querySelectorAll('.t-dot').forEach(d=>d.classList.toggle('on',d.dataset.t===prof.theme));
-      setTimeout(drawSparks,40);
-    }
-    if(prof.density){
-      document.documentElement.setAttribute('data-density',prof.density);
-      document.querySelectorAll('.d-btn').forEach(b=>b.classList.toggle('on',b.dataset.d===prof.density));
-    }
-  }catch{}
+    return p.profile||p||null;
+  }catch{return null;}
+}
+
+function _applyProfile(prof){
+  if(!prof)return;
+  if(prof.theme){
+    document.documentElement.setAttribute('data-theme',prof.theme);
+    document.querySelectorAll('.t-dot').forEach(d=>d.classList.toggle('on',d.dataset.t===prof.theme));
+    setTimeout(drawSparks,40);
+  }
+  if(prof.density){
+    document.documentElement.setAttribute('data-density',prof.density);
+    document.querySelectorAll('.d-btn').forEach(b=>b.classList.toggle('on',b.dataset.d===prof.density));
+  }
 }
 
 // ── Status pills (/api/dashboard) ───────────────────────────────
@@ -621,14 +670,14 @@ function goUni(id,btn){
   document.getElementById('bc-sep').style.display='none';
   document.getElementById('bc-sub').style.display='none';
   _activeUni=id;_activeSub='';
-  if(id==='dash'){ _loadSubView('sub-dash-overview','dashboard'); }
-  else if(panel){
-    // Auto-charge le premier sous-onglet pour les autres univers (home, plan, tools…)
+  if(panel){
     const firstStab=panel.querySelector('.stab');
     if(firstStab){
       const onclickAttr=firstStab.getAttribute('onclick');
       const match=onclickAttr&&onclickAttr.match(/goSub\(this,'([^']+)'\)/);
       if(match) goSub(firstStab, match[1]);
+    } else if(id==='dash'){
+      _loadSubView('sub-dash-overview','dashboard');
     }
   }
   _renderPluginCtxBar(id);

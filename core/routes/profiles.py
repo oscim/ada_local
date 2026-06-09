@@ -177,6 +177,7 @@ def list_modules() -> list[dict]:
 def list_universes() -> list[dict]:
     conn = _connect()
     rows = conn.execute("SELECT * FROM universes ORDER BY position").fetchall()
+    avail_ids = {m.id for m in available_modules(MODULES_ENABLED)}
     result = []
     for row in rows:
         modules = conn.execute(
@@ -184,7 +185,7 @@ def list_universes() -> list[dict]:
             "WHERE universe_id = ? ORDER BY position",
             (row["id"],),
         ).fetchall()
-        result.append({**dict(row), "modules": [r["module_id"] for r in modules]})
+        result.append({**dict(row), "modules": [r["module_id"] for r in modules if r["module_id"] in avail_ids]})
     conn.close()
     return result
 

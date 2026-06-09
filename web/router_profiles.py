@@ -68,12 +68,15 @@ class DeviceProfileIn(BaseModel):
 
 @router.get("/api/profile")
 async def get_my_profile(request: Request):
-    """Retourne le profil hydraté du device authentifié."""
+    """Retourne le profil hydraté du device authentifié, ou le profil par défaut si auth désactivée."""
     payload = _require_auth(request)
     device_id = payload.get("device_id")
-    if not device_id:
-        raise HTTPException(status_code=400, detail="device_id absent du token")
-    profile = get_device_profile(device_id)
+    if device_id:
+        profile = get_device_profile(device_id)
+    else:
+        # Auth désactivée — retourne le premier profil (seed "Complet")
+        profiles = list_profiles()
+        profile = get_profile(profiles[0]["id"]) if profiles else None
     if not profile:
         raise HTTPException(status_code=404, detail="Aucun profil trouvé")
     return {"profile": profile}

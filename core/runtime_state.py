@@ -143,6 +143,49 @@ def update_endpoint_universe(name: str, universe: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Custom Docker containers (enregistrés manuellement)
+# ---------------------------------------------------------------------------
+_CUSTOM_DOCKER_FILE = Path(__file__).parent.parent / "config" / "custom_docker.json"
+
+
+def load_custom_docker() -> list[dict]:
+    """Charge les containers Docker déclarés manuellement."""
+    try:
+        if _CUSTOM_DOCKER_FILE.exists():
+            return json.loads(_CUSTOM_DOCKER_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def add_custom_docker(name: str, image: str = "") -> None:
+    """Ajoute ou met à jour un container Docker manuel."""
+    containers = load_custom_docker()
+    for c in containers:
+        if c["name"] == name:
+            c["image"] = image
+            break
+    else:
+        containers.append({"name": name, "image": image})
+    _CUSTOM_DOCKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CUSTOM_DOCKER_FILE.write_text(
+        json.dumps(containers, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def remove_custom_docker(name: str) -> bool:
+    """Supprime un container Docker manuel. Retourne True si trouvé."""
+    containers = load_custom_docker()
+    new_list = [c for c in containers if c["name"] != name]
+    if len(new_list) == len(containers):
+        return False
+    _CUSTOM_DOCKER_FILE.write_text(
+        json.dumps(new_list, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Docker container universe mapping
 # ---------------------------------------------------------------------------
 _DOCKER_UNI_FILE = Path(__file__).parent.parent / "config" / "docker_universe.json"

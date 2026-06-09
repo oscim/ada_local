@@ -1313,6 +1313,41 @@ async def get_docker_universes():
     return _load_docker_universe()
 
 
+@app.get("/api/infra/docker/custom")
+async def list_custom_docker():
+    from core.runtime_state import load_custom_docker
+    return load_custom_docker()
+
+
+class _DockerCustomBody(BaseModel):
+    name: str
+    image: str = ""
+
+
+@app.post("/api/infra/docker/custom")
+async def add_custom_docker_api(body: _DockerCustomBody):
+    from core.runtime_state import add_custom_docker
+    add_custom_docker(body.name.strip(), body.image.strip())
+    return {"ok": True}
+
+
+@app.delete("/api/infra/docker/custom/{name}")
+async def remove_custom_docker_api(name: str):
+    from core.runtime_state import remove_custom_docker
+    found = remove_custom_docker(name)
+    return {"ok": found}
+
+
+@app.post("/api/infra/docker/refresh")
+async def refresh_docker():
+    """Relance docker ps et met à jour le cache."""
+    from core.runtime_state import _check_docker, runtime_state
+    result = _check_docker()
+    with runtime_state._lock:
+        runtime_state._state["docker"] = result
+    return result
+
+
 @app.patch("/api/infra/docker/{name}/universe")
 async def update_docker_universe_api(name: str, body: _UniverseBody):
     from core.runtime_state import update_docker_universe

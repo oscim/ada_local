@@ -293,6 +293,22 @@ function _profileForm(id, profile) {
   </div>`;
 }
 
+function _dockerForm(id, c) {
+  const v = c || {};
+  return `
+  <div class="infra-form open" id="${id}">
+    <div class="infra-form-grid">
+      <label><span>Nom du container *</span><input class="infra-input" name="name" value="${v.name||''}" placeholder="mon-container" ${c ? 'readonly' : ''}></label>
+      <label><span>Image (optionnel)</span><input class="infra-input" name="image" value="${v.image||''}" placeholder="nginx:latest"></label>
+    </div>
+    <div class="infra-form-row">
+      <button class="infra-btn primary" onclick="_infraSaveDocker('${id}','${c?.name||''}')">💾 Enregistrer</button>
+      <button class="infra-btn" onclick="_infraCloseForm('${id}')">Annuler</button>
+      <span class="infra-status-msg" id="${id}-status"></span>
+    </div>
+  </div>`;
+}
+
 function _endpointForm(id, ep) {
   const v = ep || {};
   return `
@@ -544,6 +560,40 @@ window._infraSaveSvc = async (formId, originalName) => {
   }
 };
 
+window._infraSaveDocker = async (formId, originalName) => {
+  const form = document.getElementById(formId);
+  if (!form) return;
+  const { get } = _readForm(form);
+  const statusEl = document.getElementById(formId + '-status');
+  const payload = { name: get('name') || originalName, image: get('image') };
+  if (!payload.name) {
+    if (statusEl) { statusEl.className = 'infra-status-msg err'; statusEl.textContent = '✗ Nom requis'; }
+    return;
+  }
+  try {
+    await _api('POST', '/api/infra/docker/custom', payload);
+    if (statusEl) { statusEl.className = 'infra-status-msg ok'; statusEl.textContent = '✓ Enregistré'; }
+    setTimeout(() => { window._infraMount?.(); }, 800);
+  } catch(e) {
+    if (statusEl) { statusEl.className = 'infra-status-msg err'; statusEl.textContent = '✗ ' + e.message; }
+  }
+};
+
+window._infraDeleteDocker = async (name) => {
+  if (!confirm(`Supprimer le container "${name}" de la liste ?`)) return;
+  try {
+    await _api('DELETE', '/api/infra/docker/custom/' + encodeURIComponent(name));
+    window._infraMount?.();
+  } catch(e) { alert('Erreur : ' + e.message); }
+};
+
+window._infraDockerRefresh = async () => {
+  try {
+    await _api('POST', '/api/infra/docker/refresh', {});
+    window._infraMount?.();
+  } catch(e) { window._infraMount?.(); }
+};
+
 window._infraDeleteEndpoint = async (name) => {
   if (!confirm(`Supprimer l'endpoint "${name}" ?`)) return;
   try {
@@ -572,9 +622,9 @@ export async function mount(container, opts = {}) {
 
   // Charger les données en parallèle
   let instances = [], pbsList = [], profiles = [], companies = [];
-  let svcList = [], svcEndpoints = [], infraPage = {}, dockerUniMap = {}, universesData = [];
+  let svcList = [], svcEndpoints = [], infraPage = {}, dockerUniMap = {}, universesData = [], customDocker = [];
   try {
-    [instances, pbsList, profiles, svcList, svcEndpoints, infraPage, dockerUniMap] = await Promise.all([
+    [instances, pbsList, profiles, svcList, svcEndpoints, infraPage, dockerUniMap, customDocker] = await Promise.all([
       _api('GET', '/api/proxmox/instances').catch(() => []),
       _api('GET', '/api/pbs/instances').catch(() => []),
       _api('GET', '/api/proxmox/profiles').catch(() => []),
@@ -582,6 +632,7 @@ export async function mount(container, opts = {}) {
       _api('GET', '/api/infra/endpoints').catch(() => []),
       _api('GET', '/api/page/infrastructure').catch(() => ({})),
       _api('GET', '/api/infra/docker/universes').catch(() => ({})),
+      _api('GET', '/api/infra/docker/custom').catch(() => []),
     ]);
     // Sociétés pour les selects company_id (optionnel)
     try { companies = await _api('GET', '/api/societe/companies'); } catch {}
@@ -642,6 +693,17 @@ export async function mount(container, opts = {}) {
         row.style.display = show ? 'flex' : 'none';
       });
     });
+
+    // Mettre à jour le compteur Docker avec le nombre visible
+    const dockerCountEl = container.querySelector('#docker-count');
+    if (dockerCountEl) {
+      const allRows = container.querySelectorAll('#docker-list [data-universe]');
+      const visibleCount = [...allRows].filter(r => r.style.display !== 'none').length;
+      const total = allRows.length;
+      const hiddenCount = total - visibleCount;
+      dockerCountEl.textContent = visibleCount + ' container' + (visibleCount !== 1 ? 's' : '')
+        + (hiddenCount > 0 ? ' (' + total + ' au total)' : '');
+    }
 
     // Mettre à jour le chip filtre
     const chip = container.querySelector('#infra-uni-chip');
@@ -723,17 +785,31 @@ export async function mount(container, opts = {}) {
       '</div>';
   }).join('') || '<div class="infra-empty">Aucun service configuré</div>';
 
-  const dockerContainers = (infraPage.docker && infraPage.docker.containers ? infraPage.docker.containers : []);
+  const autoContainers = (infraPage.docker && infraPage.docker.containers ? infraPage.docker.containers : []);
+  const autoNames = new Set(autoContainers.map(c => c.name));
+  // Merge : auto-détectés + custom non déjà présents (marqués custom:true)
+  const dockerContainers = [
+    ...autoContainers.map(c => ({...c, custom: false})),
+    ...customDocker.filter(c => !autoNames.has(c.name)).map(c => ({...c, status: 'unknown', custom: true})),
+  ];
+  const dockerStatus = infraPage.docker?.status || 'unknown';
   const dockerRows = dockerContainers.map(c => {
     const running = (c.status||'').toLowerCase().indexOf('up') === 0 || c.status === 'running';
-    const dot = running ? '#4caf50' : '#ef5350';
+    const dot = running ? '#4caf50' : c.status === 'unknown' ? '#f59e0b' : '#ef5350';
+    const delBtn = c.custom
+      ? '<button onclick="_infraDeleteDocker(\'' + c.name.replace(/'/g, "\\'") + '\')" style="flex-shrink:0;background:none;border:1px solid rgba(239,83,80,.4);color:#ef5350;border-radius:4px;padding:1px 6px;font-size:.72rem;cursor:pointer" title="Supprimer">✕</button>'
+      : '';
     return '<div data-universe="' + (dockerUniMap[c.name]||'') + '" style="display:flex;align-items:center;gap:7px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
       '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:' + dot + ';flex-shrink:0"></span>' +
       '<span style="font-size:.82rem;color:#e2e8f0;flex:1">' + c.name + '</span>' +
+      (c.image ? '<span style="font-size:10px;color:#64748b;margin-right:4px">' + c.image + '</span>' : '') +
       '<span style="font-size:10px;color:#64748b;margin-right:4px">' + (c.status||'') + '</span>' +
       _uniSelect(dockerUniMap[c.name], 'docker', c.name) +
+      delBtn +
       '</div>';
-  }).join('') || '<div class="infra-empty">Aucun container Docker détecté</div>';
+  }).join('') || (dockerStatus === 'unknown'
+    ? '<div class="infra-empty">Docker non détecté — ajoutez des containers manuellement</div>'
+    : '<div class="infra-empty">Aucun container Docker actif</div>');
 
   const warnings = infraPage.warnings || [];
   const warnRows = warnings.length
@@ -765,9 +841,14 @@ export async function mount(container, opts = {}) {
     <div class="infra-sec">
       <div class="infra-sec-hd">
         <span class="infra-sec-title">🐳 Docker</span>
-        <span style="font-size:.72rem;color:#64748b">${dockerContainers.length} container${dockerContainers.length > 1 ? 's' : ''}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="docker-count" style="font-size:.72rem;color:#64748b"></span>
+          <button class="infra-add-btn" onclick="_infraShowNewForm('docker')">+ Ajouter</button>
+          <a href="#" style="font-size:.72rem;color:#67e8f9" onclick="event.preventDefault();window._infraDockerRefresh && window._infraDockerRefresh()">↻</a>
+        </div>
       </div>
       <div id="docker-list">${dockerRows}</div>
+      <div id="form-new-docker-wrap"></div>
     </div>
 
     <hr class="infra-divider">
@@ -806,8 +887,17 @@ export async function mount(container, opts = {}) {
 
   </div>`;
 
-  // Initialiser le chip de filtre univers
-  if (_autoUnis) _renderLists();
+  // Initialiser le chip de filtre univers et le compteur Docker
+  if (_autoUnis) {
+    _renderLists();
+  } else {
+    // Pas de filtre actif : initialiser le compteur avec le total
+    const dockerCountEl = container.querySelector('#docker-count');
+    if (dockerCountEl) {
+      const n = dockerContainers.length;
+      dockerCountEl.textContent = n + ' container' + (n !== 1 ? 's' : '');
+    }
+  }
 
   // Handler universe select pour services / endpoints / docker
   window._infraSetUni = async function(sel) {
@@ -846,6 +936,8 @@ window._infraShowNewForm = (type) => {
     wrap.innerHTML = _pbsForm(formId, null, _companiesCache);
   } else if (type === 'svc') {
     wrap.innerHTML = _endpointForm(formId, null);
+  } else if (type === 'docker') {
+    wrap.innerHTML = _dockerForm(formId, null);
   } else {
     wrap.innerHTML = _profileForm(formId, null);
   }
