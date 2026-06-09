@@ -262,6 +262,7 @@ function _panelLLM() {
     ].join('')),
 
     _sec('Routage sémantique', [
+      _mkToggle('semantic_router.enabled', 'Activer le routage sémantique', 'Si désactivé, toutes les requêtes vont directement au modèle de discussion'),
       _mkText('semantic_router.embedding_model', 'Modèle d\'embedding',
         'Pour le routeur Ollama (ex: nomic-embed-text)', 'nomic-embed-text'),
       _mkNumber('semantic_router.confidence_threshold', 'Seuil de confiance',

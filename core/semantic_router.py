@@ -246,6 +246,7 @@ class EmbeddingRouter:
 
     def _load_settings(self) -> None:
         """Read configuration from settings_store (with safe defaults)."""
+        import os
         sr: dict = {}
         base_url = "http://localhost:11434"
         try:
@@ -253,6 +254,15 @@ class EmbeddingRouter:
             sr = app_settings.get("semantic_router", {})
             base_url = app_settings.get("ollama_url", base_url)
         except Exception:
+            pass
+        # Env var always wins over stored settings (important for Docker deployments)
+        env_ollama = os.getenv("OLLAMA_URL") or ""
+        if env_ollama:
+            base = env_ollama.rstrip("/")
+            if base.endswith("/api"):
+                base = base[:-4]
+            base_url = base
+        elif base_url == "http://localhost:11434":
             try:
                 from config import OLLAMA_URL
                 base = OLLAMA_URL.rstrip("/")
@@ -433,14 +443,27 @@ _VISION_KEYWORDS = re.compile(
 )
 
 
+def _semantic_routing_enabled() -> bool:
+    """Return False if the user has disabled semantic routing in settings."""
+    try:
+        from core.settings_store import settings as _s
+        return bool(_s.get("semantic_router.enabled", True))
+    except Exception:
+        return True
+
+
 def get_route(prompt: str) -> str:
     """
     Route a prompt to one of the VALID_ROUTES.
     Public interface — identical signature to the previous keyword router.
     """
-    # Vision guard first — "regarde le bureau" must not bleed into function_gemma
+    # Vision guard always runs regardless of routing mode
     if _VISION_KEYWORDS.search(prompt):
         return "vision"
+
+    if not _semantic_routing_enabled():
+        return "qwen_basic"
+
     # Fast guard pour les workflows n8n et tests réseau
     if _N8N_WORKFLOW_RE.search(prompt):
         return "function_gemma"

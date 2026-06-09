@@ -9,7 +9,8 @@ import time
 import urllib.parse
 
 import requests
-from PySide6.QtCore import QObject, Signal
+
+from core.signals import Signal
 
 from core.settings_store import settings as app_settings
 from config import OLLAMA_URL, RESPONDER_MODEL
@@ -42,16 +43,15 @@ Rules:
 """
 
 
-class TextBrowserAgent(QObject):
+class TextBrowserAgent:
     """Lightweight text-based browser agent using qwen3:1.7b + Playwright."""
 
-    step_update = Signal(str)   # log line
-    result_ready = Signal(str)  # final answer
+    step_update = Signal(str)
+    result_ready = Signal(str)
     finished = Signal()
     error_occurred = Signal(str)
 
     def __init__(self):
-        super().__init__()
         self._running = False
         self._controller = None
 

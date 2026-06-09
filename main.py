@@ -1,5 +1,9 @@
 """
-Pocket AI - Main Entry Point
+Pocket AI - Desktop GUI Entry Point (legacy).
+
+NOTE: This launcher requires the optional desktop dependencies (PySide6,
+qfluentwidgets) and the `gui/` package which has been removed in favour of
+the web panel.  Use `web_server.py` for the Docker / headless mode.
 """
 
 import os
@@ -46,11 +50,23 @@ import sys
 # Suppress ALL warnings globally before any other imports
 warnings.simplefilter("ignore")
 
-from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QApplication
-from PySide6.QtGui import QFont, QColor, QIcon
-from gui.app import MainWindow
-from qfluentwidgets import qconfig, Theme, SplashScreen
+try:
+    from PySide6.QtCore import QSize
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QFont, QColor, QIcon
+    from qfluentwidgets import qconfig, Theme, SplashScreen
+except ImportError:
+    print("ERROR: Desktop dependencies (PySide6, qfluentwidgets) are not installed.")
+    print("Use `python web_server.py` to run ADA in web/Docker mode.")
+    import sys; sys.exit(1)
+
+try:
+    from gui.app import MainWindow
+except ImportError:
+    print("ERROR: The gui/ package is not present — desktop mode is unavailable.")
+    print("Use `python web_server.py` to run ADA in web/Docker mode.")
+    import sys; sys.exit(1)
+
 import threading
 
 if __name__ == "__main__":

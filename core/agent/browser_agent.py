@@ -1,8 +1,8 @@
-from PySide6.QtCore import QObject, Signal, QThread, QByteArray, QBuffer, QIODevice
-from PySide6.QtGui import QImage
 import base64
 import time
 import json
+
+from core.signals import Signal
 
 from .browser_controller import BrowserController
 from .vlm_client import VLMClient
@@ -10,19 +10,16 @@ from .vlm_client import VLMClient
 from core.model_manager import ensure_exclusive_qwen
 from core.model_persistence import unload_qwen
 
-class BrowserAgent(QObject):
-    """
-    Worker agent that runs the VLM-Browser loop.
-    Intended to be moved to a QThread.
-    """
-    screenshot_updated = Signal(QImage)
+class BrowserAgent:
+    """Worker agent that runs the VLM-Browser loop."""
+
+    screenshot_updated = Signal(bytes)  # raw PNG bytes
     thinking_update = Signal(str)
     action_updated = Signal(str)
     finished = Signal()
     error_occurred = Signal(str)
 
     def __init__(self, model_name="qwen3-vl:4b"):
-        super().__init__()
         self.controller = BrowserController(headless=True) # Headed for debugging/visibility
         self.client = VLMClient(
             model_name=model_name,
@@ -192,13 +189,8 @@ class BrowserAgent(QObject):
 
     def _emit_screenshot(self, b64_str):
         try:
-            # Convert base64 to QImage
-            # QImage.fromData expects bytes
-            img_data = base64.b64decode(b64_str)
-            image = QImage.fromData(img_data)
-            self.screenshot_updated.emit(image)
+            self.screenshot_updated.emit(base64.b64decode(b64_str))
         except Exception as e:
-            print(f"Image conversion error: {e}")
             self.action_updated.emit(f"Screenshot Error: {e}")
 
     def cleanup(self):

@@ -13,6 +13,8 @@
     "web_agent_model": "Web Agent Model",
     "web_agent_model_desc": "Vision-language model for browser automation",
     "router_model": "Function Router Model",
+    "semantic_routing_enabled": "Semantic Routing",
+    "semantic_routing_enabled_desc": "Use AI embeddings to select the best model per request. When off, all requests go directly to the chat model.",
     "refresh_models": "Refresh Models",
     "refresh_models_desc": "Fetch available models from Ollama",
     "refresh_btn": "Refresh",

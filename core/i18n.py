@@ -10,12 +10,12 @@ Usage:
 
 import json
 from pathlib import Path
-from PySide6.QtCore import QObject, Signal
 
+from core.signals import Signal
 from core.settings_store import settings as _app_settings
 
 
-class I18nEngine(QObject):
+class I18nEngine:
     language_changed = Signal(str)   # emits new lang code: "en" or "fr"
 
     SUPPORTED = {"en", "fr"}
@@ -23,7 +23,6 @@ class I18nEngine(QObject):
     _LOCALES_DIR = Path(__file__).parent.parent / "locales"
 
     def __init__(self):
-        super().__init__()
         self._lang: str = self.DEFAULT
         self._strings: dict = {}
         lang = _app_settings.get("app.language", self.DEFAULT)

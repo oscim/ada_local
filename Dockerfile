@@ -42,7 +42,8 @@ COPY requirements.txt /tmp/requirements.txt
 COPY requirements.docker*.txt /tmp/
 ARG ADA_REQUIREMENTS_FILE=/tmp/requirements.txt
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r "${ADA_REQUIREMENTS_FILE}"
+    && python -m pip install -r "${ADA_REQUIREMENTS_FILE}" \
+    && python -m playwright install --with-deps chromium
 
 COPY . /app
 COPY default /opt/ada-seed

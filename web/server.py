@@ -367,6 +367,14 @@ async def _startup() -> None:
         import logging as _log_pipe
         _log_pipe.getLogger(__name__).warning("[IntentPipeline] Erreur démarrage polling : %s", _e_pipe)
 
+    # Telegram adapter — long-polling bot (no-op if disabled or no token)
+    try:
+        from core.telegram_adapter import telegram_adapter as _tg
+        _tg.start()
+    except Exception as _e_tg:
+        import logging as _log_tg
+        _log_tg.getLogger(__name__).warning("[Telegram] Erreur démarrage : %s", _e_tg)
+
 
 # ---------------------------------------------------------------------------
 # PWA obligatoire hors /static/

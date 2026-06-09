@@ -8,7 +8,8 @@ import threading
 import json
 import requests
 from typing import Optional
-from PySide6.QtCore import QObject, Signal
+
+from core.signals import Signal
 
 from config import (
     RESPONDER_MODEL, OLLAMA_URL, MAX_HISTORY, GRAY, RESET, CYAN, GREEN, WAKE_WORD,
@@ -44,23 +45,20 @@ ACTION_FUNCTIONS = {
 SEMANTIC_BYPASS = {"qwen_basic", "qwen_thinking"}
 
 
-class VoiceAssistant(QObject):
+class VoiceAssistant:
     """Main voice assistant orchestrator."""
-    
-    # Signals for UI updates (optional)
+
     wake_word_detected = Signal()
     speech_recognized = Signal(str)
     processing_started = Signal()
     processing_finished = Signal()
     error_occurred = Signal(str)
-    # GUI update signals
-    timer_set = Signal(int, str)  # seconds, label
+    timer_set = Signal(int, str)
     alarm_added = Signal()
     calendar_updated = Signal()
     task_added = Signal()
-    
+
     def __init__(self):
-        super().__init__()
         self.stt_listener: Optional[STTListener] = None
         self.running = False
         self.messages = [

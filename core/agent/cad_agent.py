@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import QObject, Signal
+from core.signals import Signal
 
 from config import OLLAMA_URL, RESPONDER_MODEL
 from core.llm import http_session
@@ -57,15 +57,14 @@ Keep all unchanged geometry intact.
 """
 
 
-class CadAgent(QObject):
+class CadAgent:
     """Generates and executes build123d code via Ollama with auto-retry."""
 
-    log = Signal(str)        # progress log line
-    thinking = Signal(str)   # LLM thinking text
-    finished = Signal(dict)  # {"success": bool, "stl_path": str, "code": str, "error": str}
+    log = Signal(str)
+    thinking = Signal(str)
+    finished = Signal(dict)
 
     def __init__(self, parent=None):
-        super().__init__(parent)
         self._running = False
 
     def stop(self):

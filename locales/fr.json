@@ -13,6 +13,8 @@
     "web_agent_model": "Modèle Web Agent",
     "web_agent_model_desc": "Modèle vision-langage pour l'automatisation du navigateur",
     "router_model": "Modèle de routage",
+    "semantic_routing_enabled": "Routage sémantique",
+    "semantic_routing_enabled_desc": "Utilise des embeddings IA pour choisir le meilleur modèle selon la requête. Désactivé : toutes les requêtes vont directement au modèle de discussion.",
     "refresh_models": "Actualiser les modèles",
     "refresh_models_desc": "Récupérer les modèles disponibles depuis Ollama",
     "refresh_btn": "Actualiser",

@@ -4,6 +4,7 @@ Saves settings to ~/.pocket_ai/settings.json
 """
 
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -27,10 +28,18 @@ except ImportError:
         pass
 
 
+def _default_ollama_base_url() -> str:
+    """Derive base URL (no /api suffix) from OLLAMA_URL env var if set."""
+    url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+    if url.endswith("/api"):
+        url = url[:-4]
+    return url
+
+
 # Default settings - used when no settings file exists
 DEFAULT_SETTINGS = {
     "theme": "Dark",
-    "ollama_url": "http://localhost:11434",
+    "ollama_url": _default_ollama_base_url(),
     "user": {
         "name": "Aurelien",
     },
@@ -99,6 +108,7 @@ DEFAULT_SETTINGS = {
         "ha_tts_entity": "",               # selected HA media_player entity_id (device id in registry)
     },
     "semantic_router": {
+        "enabled": True,
         "embedding_model": "nomic-embed-text",
         "confidence_threshold": 0.45,
         "embed_timeout_s": 5.0,
