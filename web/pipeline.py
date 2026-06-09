@@ -1146,6 +1146,169 @@ async def process_message(
 
     text_lower = user_text.lower()
 
+    # ── Étape 1 : Résolution mémoire sémantique ──────────────────────────────
+    try:
+        from config import SEMANTIC_MEMORY_ENABLED as _SEM_EN
+        if _SEM_EN:
+            from core.memory.semantic_resolver import (
+                resolve as _sem_resolve,
+                has_domotique_context as _sem_has_dom,
+            )
+            from core.memory.semantic_learner import (
+                get_pending as _sem_get_pending,
+                clear_pending as _sem_clear_pending,
+                set_pending as _sem_set_pending,
+                analyze_and_store as _sem_analyze,
+                generate_clarification_question as _sem_gen_clarif,
+                run_onboarding as _sem_run_ob,
+            )
+
+            # A. Traiter la réponse à une clarification/onboarding précédente
+            _sem_pending = _sem_get_pending(session_id)
+            if _sem_pending:
+                _sem_clear_pending(session_id)
+                import asyncio as _aio
+                _aio.create_task(_sem_analyze(
+                    clarification_question=_sem_pending["q"],
+                    user_answer=user_text,
+                    session_id=session_id,
+                ))
+                # If onboarding: check if another question is needed
+                if _sem_pending.get("mode") == "onboarding":
+                    from config import SEMANTIC_ONBOARDING_MAX_TURNS as _MAX_OB
+                    _next_turn = _sem_pending.get("turn", 0) + 1
+                    from config import MODULES_ENABLED as _ME_OB
+                    _active_univs_ob = [k for k, v in _ME_OB.items() if v]
+                    _sys_ents_ob: list[str] = []
+                    try:
+                        from core.unified_entities import unified_entity_service as _ues_ob
+                        _sys_ents_ob = [e.name for e in _ues_ob.get_unified_entities(force_refresh=False)[:30] if e.name]
+                    except Exception:
+                        pass
+                    _ob_next = await _sem_run_ob(
+                        active_universes=_active_univs_ob,
+                        system_entities=_sys_ents_ob,
+                        turn=_next_turn,
+                        max_turns=_MAX_OB,
+                    )
+                    if _ob_next:
+                        _sem_set_pending(session_id, _ob_next, mode="onboarding", turn=_next_turn)
+                        memory_store.save(session_id, "user", user_text)
+                        memory_store.save(session_id, "assistant", _ob_next)
+                        yield _ob_next
+                        return
+                    # else: onboarding complete → fall through to normal pipeline
+
+            # B. Résoudre les entités pronominales dans le message courant
+            _sem_user_name = ""
+            try:
+                from core.settings_store import settings as _sem_settings
+                _sem_user_name = _sem_settings.get("user.name", "") or ""
+            except Exception:
+                pass
+
+            _sem_res = _sem_resolve(user_text, user_name=_sem_user_name)
+
+            if _sem_res.entities:
+                # Resolution succeeded → update query for downstream pipeline
+                user_text = _sem_res.resolved_text
+                text_lower = user_text.lower()
+                try:
+                    from web.radar.events import emit_event as _emit_ev
+                    _emit_ev(
+                        type="semantic.resolved",
+                        level="info",
+                        module="web.pipeline",
+                        request_id=_req_id,
+                        metadata={
+                            "original": message[:120],
+                            "resolved": user_text[:120],
+                            "count": len(_sem_res.entities),
+                        },
+                    )
+                except Exception:
+                    pass
+
+            elif _sem_res.unresolved_refs and _sem_has_dom(_sem_res.resolved_text.lower()):
+                # C. Ambiguïté détectée → question de clarification
+                _sem_ref = _sem_res.unresolved_refs[0]
+                _sem_known_facts: list[dict] = []
+                _sem_sys_ents: list[str] = []
+                try:
+                    for _rec in memory_store.get_consolidated(days=365):
+                        _sem_known_facts.extend(_rec.get("facts", []))
+                except Exception:
+                    pass
+                try:
+                    from core.unified_entities import unified_entity_service as _ues_sem
+                    _sem_sys_ents = [e.name for e in _ues_sem.get_unified_entities(force_refresh=False)[:30] if e.name]
+                except Exception:
+                    pass
+
+                _sem_q = await _sem_gen_clarif(
+                    unresolved_ref=_sem_ref,
+                    known_facts=_sem_known_facts,
+                    system_entities=_sem_sys_ents,
+                )
+                _sem_set_pending(session_id, _sem_q, mode="clarification")
+
+                try:
+                    from web.radar.events import emit_event as _emit_ev
+                    _emit_ev(
+                        type="semantic.ambiguity_detected",
+                        level="info",
+                        module="web.pipeline",
+                        request_id=_req_id,
+                        metadata={"ref": _sem_ref},
+                    )
+                except Exception:
+                    pass
+
+                memory_store.save(session_id, "user", user_text)
+                memory_store.save(session_id, "assistant", _sem_q)
+                yield _sem_q
+                return
+
+            elif not history and not memory_store.get_consolidated(days=365):
+                # D. Onboarding — mémoire vide au premier tour
+                from config import MODULES_ENABLED as _ME_INIT
+                _active_univs = [k for k, v in _ME_INIT.items() if v]
+                _sys_ents_init: list[str] = []
+                try:
+                    from core.unified_entities import unified_entity_service as _ues_init
+                    _sys_ents_init = [e.name for e in _ues_init.get_unified_entities(force_refresh=False)[:30] if e.name]
+                except Exception:
+                    pass
+                from config import SEMANTIC_ONBOARDING_MAX_TURNS as _MAX_OB2
+                _ob_q0 = await _sem_run_ob(
+                    active_universes=_active_univs,
+                    system_entities=_sys_ents_init,
+                    turn=0,
+                    max_turns=_MAX_OB2,
+                )
+                if _ob_q0:
+                    _sem_set_pending(session_id, _ob_q0, mode="onboarding", turn=0)
+                    memory_store.save(session_id, "user", user_text)
+                    memory_store.save(session_id, "assistant", _ob_q0)
+                    yield _ob_q0
+                    return
+
+            elif _sem_res.unresolved_refs:
+                # E. Résolution impossible — pipeline continue normalement
+                try:
+                    from web.radar.events import emit_event as _emit_ev
+                    _emit_ev(
+                        type="semantic.resolution_failed",
+                        level="warning",
+                        module="web.pipeline",
+                        request_id=_req_id,
+                        metadata={"refs": _sem_res.unresolved_refs},
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        pass  # semantic resolution never blocks the pipeline
+
     # ── Étape 2 : Détection d'intention légère ──────────────────────────────
     _pipeline_context: dict = {}
     try:
